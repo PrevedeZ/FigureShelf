@@ -1,0 +1,67 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum Currency {
+  EUR
+  USD
+  GBP
+  JPY
+}
+
+enum ReleaseType {
+  retail          // regular retail
+  tamashii_web    // Tamashii Web Store
+  event_exclusive // event-only
+  sdcc            // San Diego Comic-Con
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+}
+
+model Series {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  createdAt DateTime  @default(now())
+  figures   Figure[]
+}
+
+model Figure {
+  id            String  @id @default(cuid())
+  name          String
+  character     String
+  characterBase String?    // e.g., "Goku"
+  variant       String?    // e.g., "SSG"
+  line          String
+  image         String
+  releaseYear   Int
+  releaseType   ReleaseType?
+  bodyVersion   String?    // e.g., "V1.0" | "V2.0" | "V3.0"
+  saga          String?    // e.g., "Saiyan Saga"
+  msrpCents     Int
+  msrpCurrency  Currency
+  seriesId      String
+  series        Series @relation(fields: [seriesId], references: [id])
+
+  @@index([seriesId])
+  @@index([characterBase])
+  @@index([variant])
+  @@index([seriesId, characterBase])
+  // @@unique([seriesId, name, variant]) // optional
+}
