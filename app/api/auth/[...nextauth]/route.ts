@@ -5,6 +5,7 @@ import { prisma } from "../../../../lib/prisma";
 
 export const authOptions: NextAuthOptions = {
   session: { strategy: "jwt" },
+  pages: { signIn: "/auth/signin" },
   providers: [
     Credentials({
       name: "Credentials",
@@ -12,30 +13,23 @@ export const authOptions: NextAuthOptions = {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
-      async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) return null;
+      async authorize(creds) {
+        const email = creds?.email?.toString().trim().toLowerCase();
+        const password = creds?.password?.toString() ?? "";
+        if (!email || !password) return null;
 
-        const user = await prisma.user.findUnique({
-          where: { email: String(credentials.email) },
-        });
+        const user = await prisma.user.findUnique({ where: { email } });
         if (!user) return null;
 
-        const ok = await bcrypt.compare(String(credentials.password), user.password);
+        const ok = await bcrypt.compare(password, user.password);
         if (!ok) return null;
 
-        // What becomes available in `user` during jwt callback
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name ?? undefined,
-          role: user.role as "USER" | "ADMIN",
-        };
+        return { id: user.id, email: user.email, name: user.name ?? undefined, role: user.role } as any;
       },
     }),
   ],
   callbacks: {
     async jwt({ token, user }) {
-      // On sign-in `user` is defined; on subsequent calls it's undefined
       if (user) {
         token.id = (user as any).id;
         token.role = (user as any).role;
@@ -45,13 +39,10 @@ export const authOptions: NextAuthOptions = {
     async session({ session, token }) {
       if (session.user) {
         (session.user as any).id = token.id as string | undefined;
-        (session.user as any).role = token.role as ("USER" | "ADMIN") | undefined;
+        (session.user as any).role = token.role as "USER" | "ADMIN" | undefined;
       }
       return session;
     },
-  },
-  pages: {
-    signIn: "/auth/signin",
   },
 };
 

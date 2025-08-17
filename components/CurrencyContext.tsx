@@ -1,77 +1,74 @@
 "use client";
+
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-
-export type CCY = "EUR" | "USD" | "GBP" | "JPY";
-type Rates = Record<CCY, number>;
-
-// Pick ONE locale to avoid SSR/CSR mismatch.
-// "de-DE" → 0,00 €   |   "en-US" → €0.00
-const LOCALE = "de-DE";
+import type { CCY } from "./types";
 
 type Ctx = {
   currency: CCY;
   setCurrency: (c: CCY) => void;
-  rates: Rates;          // 1 EUR = rates[ccy]
-  lastFxDate?: string;
-  ratePerEUR: (ccy: CCY) => number;
-  toEurCents: (amountCents: number, from: CCY, fxPerEUR?: number) => number;
+  toEurCents: (amountCents: number, from: CCY, fxPerEUR?: number | null | undefined) => number;
   fromEurCents: (eurCents: number, to: CCY) => number;
-  convert: (amountCents: number, from: CCY, to?: CCY) => number;
+  format: (amountCents: number, ccy?: CCY) => string;
 };
 
 const CurrencyContext = createContext<Ctx | null>(null);
 
+const CCYS: CCY[] = ["EUR", "USD", "GBP", "JPY"];
+
 export function CurrencyProvider({ children }: { children: React.ReactNode }) {
   const [currency, setCurrency] = useState<CCY>("EUR");
-  const [rates, setRates] = useState<Rates>({ EUR: 1, USD: 1.09, GBP: 0.84, JPY: 169 });
-  const [lastFxDate, setLastFxDate] = useState<string | undefined>(undefined);
+  const [rates, setRates] = useState<Record<CCY, number>>({ EUR: 1, USD: 1.1, GBP: 0.85, JPY: 160 });
 
-  // Load live FX from our API (server caches it)
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/fx", { cache: "no-store" });
-        const data = await res.json();
-        // ensure the 4 keys exist
-        setRates({
-          EUR: 1,
-          USD: data?.rates?.USD ?? 1.09,
-          GBP: data?.rates?.GBP ?? 0.84,
-          JPY: data?.rates?.JPY ?? 169,
-        });
-        setLastFxDate(data?.date);
-      } catch {
-        /* keep defaults */
-      }
+        const r = await fetch("/api/fx", { cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
+        if (j && typeof j === "object") {
+          setRates((prev) => ({ ...prev, ...j }));
+        }
+      } catch { /* keep defaults */ }
     })();
   }, []);
 
-  const ratePerEUR = (ccy: CCY) => (ccy === "EUR" ? 1 : rates[ccy]);
-
-  const toEurCents = (amountCents: number, from: CCY, fxPerEUR?: number) => {
-    // amount is in 'from' currency. If we know the historical fxPerEUR snapshot, use it.
+  const toEurCents = (amountCents: number, from: CCY, fxPerEUR?: number | null | undefined) => {
+    if (!amountCents) return 0;
     if (from === "EUR") return amountCents;
-    const perEUR = fxPerEUR ?? ratePerEUR(from);
-    return Math.round(amountCents / perEUR);
+    if (fxPerEUR && fxPerEUR > 0) {
+      // fxPerEUR = how many FROM per 1 EUR → EUR = FROM / fxPerEUR
+      return Math.round(amountCents / fxPerEUR);
+    }
+    const perEur = rates[from];
+    return perEur > 0 ? Math.round(amountCents / perEur) : amountCents;
   };
 
   const fromEurCents = (eurCents: number, to: CCY) => {
     if (to === "EUR") return eurCents;
-    return Math.round(eurCents * ratePerEUR(to));
+    const perEur = rates[to];
+    return Math.round(eurCents * (perEur || 1));
   };
 
-  const convert = (amountCents: number, from: CCY, to: CCY = currency) => {
-    const eur = toEurCents(amountCents, from);
-    return fromEurCents(eur, to);
+  const format = (amountCents: number, ccy: CCY = currency) => {
+    const v = (amountCents / 100).toLocaleString(undefined, {
+      style: "currency",
+      currency: ccy,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return v;
   };
 
-  const value = useMemo(
-    () => ({ currency, setCurrency, rates, lastFxDate, ratePerEUR, toEurCents, fromEurCents, convert }),
-    [currency, rates, lastFxDate]
-  );
+  const value = useMemo<Ctx>(() => ({
+    currency,
+    setCurrency: (c) => setCurrency(CCYS.includes(c) ? c : "EUR"),
+    toEurCents,
+    fromEurCents,
+    format,
+  }), [currency, rates]);
 
   return <CurrencyContext.Provider value={value}>{children}</CurrencyContext.Provider>;
 }
+export default CurrencyProvider; // also export default
 
 export function useCurrency() {
   const ctx = useContext(CurrencyContext);
@@ -79,6 +76,7 @@ export function useCurrency() {
   return ctx;
 }
 
+// convenient helpers for components that only need formatting
 export function formatCents(cents: number, ccy: CCY) {
-  return new Intl.NumberFormat(LOCALE, { style: "currency", currency: ccy }).format(cents / 100);
+  return (cents / 100).toLocaleString(undefined, { style: "currency", currency: ccy });
 }

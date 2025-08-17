@@ -1,72 +1,49 @@
 "use client";
-import Image from "next/image";
-import type { Figure } from "./types";
-import { useCurrency, formatCents } from "./CurrencyContext";
+import type { Figure, CCY } from "./types";
 import { useCollection } from "./CollectionStore";
+import { formatCents } from "./CurrencyContext";
 
-export default function FigureCard({
-  fig,
-  onAdd,
-  onEditOwned,
-  onWishlist,
-  onManageOwned,
-}: {
-  fig: Figure;
-  onAdd: (f: Figure) => void;
-  onEditOwned: (ownedId: string, fig: Figure) => void;
-  onWishlist: () => void;
-  onManageOwned: (f: Figure) => void;
-}) {
-  const { convert, currency } = useCurrency();
-  const { ownedCountForFigure, isWished, wishFor, sellOne, removeWish } = useCollection();
-
-  const msrpInDisplay = convert(fig.msrpCents, fig.msrpCurrency, currency);
-  const count = ownedCountForFigure(fig.id);
-  const hasOwned = count > 0;
-  const wished = isWished(fig.id);
-  const wish = wishFor(fig.id);
+export default function FigureCard({ fig }: { fig: Figure }) {
+  const { addOwned, removeOneOwnedByFigure, addWish, ownedIdsByFigure } = useCollection();
+  const qty = ownedIdsByFigure(fig.id).length;
 
   return (
-    <div className="card overflow-hidden flex flex-col">
-      <div className="relative aspect-[4/5]">
-        <Image src={fig.image} alt={fig.name} fill className="object-cover" />
-        <div className="absolute left-2 top-2 badge">{fig.series}</div>
-        {fig.releaseType && <div className="absolute left-2 bottom-2 badge">{fig.releaseType}</div>}
-        {hasOwned && <div className="absolute right-2 top-2 badge">Owned ×{count}</div>}
-        {!hasOwned && wished && <div className="absolute right-2 top-2 badge">Wish</div>}
-        {hasOwned && wished && !wish?.wantAnother && <div className="absolute right-2 bottom-2 badge">Wish (Owned)</div>}
-      </div>
-
-      <div className="p-3 flex flex-col gap-2">
-        <div className="w-full">
-          <h3 className="font-semibold leading-snug text-center">{fig.name}</h3>
-          <p className="text-sm text-gray-600 text-center">
-            {fig.characterBase ?? fig.character}
-            {fig.variant ? ` (${fig.variant})` : ""} · {fig.releaseYear}
-          </p>
+    <div className="card overflow-hidden">
+      <div className="relative">
+        <img src={fig.image} alt={fig.name} className="w-full h-72 object-cover" />
+        <div className="absolute top-2 left-2 text-xs px-2 py-1 rounded-full bg-white/90">
+          {fig.series}
         </div>
-        <div className="text-sm text-gray-700 text-center">MSRP {formatCents(msrpInDisplay, currency)}</div>
-
-        {hasOwned && (
-          <div className="mt-1 flex items-center justify-center gap-2">
-            <button className="btn btn-ghost" onClick={() => sellOne(fig.id)} aria-label="Sell one">−</button>
-            <div className="px-3 py-1 rounded-md border border-[var(--border)] min-w-10 text-center">{count}</div>
-            <button className="btn btn-ghost" onClick={() => onAdd(fig)} aria-label="Add another">+</button>
+        {qty > 0 && (
+          <div className="absolute top-2 right-2 text-xs px-2 py-1 rounded-full bg-white/90">
+            Owned ×{qty}
           </div>
         )}
+      </div>
 
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <button className="btn btn-primary" onClick={() => onAdd(fig)}>
-            {hasOwned ? "Add another" : "Add to Owned"}
+      <div className="p-3">
+        <div className="text-center font-semibold">{fig.name}</div>
+        <div className="text-center text-sm text-gray-600">
+          {fig.character} · {fig.releaseYear}
+        </div>
+        <div className="mt-1 text-center text-sm">
+          MSRP {formatCents(fig.msrpCents, fig.msrpCurrency as CCY)}
+        </div>
+
+        <div className="mt-3 flex items-center justify-center gap-2">
+          <button className="btn btn-ghost h-9" disabled={qty === 0}
+                  onClick={() => removeOneOwnedByFigure(fig.id)}>−</button>
+          <span className="px-3">{qty}</span>
+          <button className="btn btn-ghost h-9" onClick={() => addOwned(fig.id)}>+</button>
+        </div>
+
+        <div className="mt-2 flex gap-2">
+          <button className="btn btn-primary h-9 flex-1" onClick={() => addOwned(fig.id)}>
+            Add another
           </button>
-
-          {hasOwned ? (
-            <button className="btn btn-ghost" onClick={() => onManageOwned(fig)}>Manage</button>
-          ) : wished ? (
-            <button className="btn btn-ghost" onClick={() => removeWish(fig.id)}>Remove wish</button>
-          ) : (
-            <button className="btn btn-ghost" onClick={onWishlist}>Wishlist</button>
-          )}
+          <button className="btn btn-ghost h-9" onClick={() => addWish(fig.id)}>
+            Wishlist
+          </button>
         </div>
       </div>
     </div>

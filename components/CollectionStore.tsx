@@ -1,215 +1,117 @@
 "use client";
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { useSession } from "next-auth/react";
 
-/* ---------- Types ---------- */
-export type CurrencyCode = "EUR" | "USD" | "GBP" | "JPY";
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import type { CCY } from "./types";
 
-export type OwnedEntry = {
+export type OwnedRow = {
   id: string;
   figureId: string;
-  currency: CurrencyCode;
+  currency: CCY;
   pricePaidCents: number;
-  taxCents?: number;
-  shippingCents?: number;
-  store?: string;
-  purchasedAt?: string; // ISO
-  fxPerEUR?: number;
+  taxCents: number;
+  shippingCents: number;
+  fxPerEUR?: number | null;
+  createdAt?: string;
 };
 
-export type WishEntry = {
+export type WishRow = {
+  id: string;
   figureId: string;
-  wantAnother?: boolean;
-  note?: string;
+  note?: string | null;
+  createdAt?: string;
 };
 
-type AddOwnedPayload = {
-  figureId: string;
-  currency: CurrencyCode;
-  pricePaidCents?: number;
-  taxCents?: number;
-  shippingCents?: number;
-  store?: string;
-  purchasedAt?: string;
-  fxPerEUR?: number;
+type Ctx = {
+  owned: OwnedRow[];
+  wishlist: WishRow[];
+  refresh: () => Promise<void>;
+
+  ownedById: (figureId: string) => number;
+
+  addOwned: (figureId: string, input: Partial<OwnedRow>) => Promise<void>;
+  updateOwned: (ownedId: string, input: Partial<OwnedRow>) => Promise<void>;
+  deleteOwned: (ownedId: string) => Promise<void>;
+
+  addWish: (figureId: string, note?: string) => Promise<void>;
+  removeWish: (wishId: string) => Promise<void>;
 };
 
-type UpdateOwnedPatch = Partial<Omit<OwnedEntry, "id" | "figureId">>;
+const CollectionContext = createContext<Ctx | null>(null);
 
-export type CollectionContextType = {
-  owned: OwnedEntry[];
-  wishlist: WishEntry[];
-  // queries
-  ownedCountForFigure: (figureId: string) => number;
-  ownedByFigure: (figureId: string) => OwnedEntry[];
-  ownedById: (ownedId: string) => OwnedEntry | null;
-  isWished: (figureId: string) => boolean;
-  wishFor: (figureId: string) => WishEntry | null;
-  // mutations
-  addOwned: (payload: AddOwnedPayload) => OwnedEntry;
-  updateOwned: (ownedId: string, patch: UpdateOwnedPatch) => void;
-  sellOne: (figureId: string) => void;
-  addWish: (figureId: string, data?: { wantAnother?: boolean; note?: string }) => void;
-  removeWish: (figureId: string) => void;
-  resetLocalData: () => void; // NEW: clear current user's namespace
-};
-
-const CollectionContext = createContext<CollectionContextType | null>(null);
-
-/* ---------- Storage helpers ---------- */
-const SCHEMA_VERSION = "2";
-
-function ns(email?: string | null) {
-  return (email && email.trim()) ? `u:${email.trim().toLowerCase()}` : "u:guest";
+async function getJSON(url: string) {
+  const r = await fetch(url, { cache: "no-store", credentials: "include" });
+  if (!r.ok) throw new Error(`${r.status} ${url}`);
+  return r.json();
 }
-function keysFor(email?: string | null) {
-  const N = ns(email);
-  return {
-    OWNED: `figures/${N}/owned`,
-    WISH: `figures/${N}/wishlist`,
-    META: `figures/${N}/meta`,
-  };
+async function sendJSON(url: string, method: "POST"|"PUT"|"PATCH"|"DELETE", body?: any) {
+  const r = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error(`${r.status} ${url}`);
+  return r.json().catch(() => ({}));
 }
 
-function loadOwned(k: string): OwnedEntry[] {
-  if (typeof window === "undefined") return [];
-  try { const raw = localStorage.getItem(k); return raw ? (JSON.parse(raw) as OwnedEntry[]) : []; } catch { return []; }
-}
-function loadWish(k: string): WishEntry[] {
-  if (typeof window === "undefined") return [];
-  try { const raw = localStorage.getItem(k); return raw ? (JSON.parse(raw) as WishEntry[]) : []; } catch { return []; }
-}
-function saveOwned(k: string, list: OwnedEntry[]) { try { localStorage.setItem(k, JSON.stringify(list)); } catch {} }
-function saveWish(k: string, list: WishEntry[]) { try { localStorage.setItem(k, JSON.stringify(list)); } catch {} }
-
-function readMeta(k: string) {
-  try { return JSON.parse(localStorage.getItem(k) || "{}") as { schemaVersion?: string }; } catch { return {}; }
-}
-function writeMeta(k: string, meta: any) { try { localStorage.setItem(k, JSON.stringify(meta)); } catch {} }
-
-function uid() {
-  return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
-}
-
-/* ---------- Provider ---------- */
 export function CollectionProvider({ children }: { children: React.ReactNode }) {
-  const { data } = useSession();
-  const email = (data?.user as any)?.email || null;
-  const { OWNED, WISH, META } = keysFor(email);
+  const [owned, setOwned] = useState<OwnedRow[]>([]);
+  const [wishlist, setWishlist] = useState<WishRow[]>([]);
 
-  const [owned, setOwned] = useState<OwnedEntry[]>([]);
-  const [wishlist, setWishlist] = useState<WishEntry[]>([]);
+  const refresh = async () => {
+    const [o, w] = await Promise.all([
+      getJSON("/api/owned/list").then((j) => Array.isArray(j.rows) ? j.rows : []),
+      getJSON("/api/wishlist/list").then((j) => Array.isArray(j.rows) ? j.rows : []),
+    ]).catch(() => [[], []] as [OwnedRow[], WishRow[]]);
+    setOwned(o);
+    setWishlist(w);
+  };
 
-  // reload when user changes
-  const lastNs = useRef<string | null>(null);
   useEffect(() => {
-    const currentNs = ns(email);
-    if (lastNs.current === currentNs) return;
-    lastNs.current = currentNs;
-
-    // schema bump -> clear this namespace
-    const meta = readMeta(META);
-    if (meta.schemaVersion !== SCHEMA_VERSION) {
-      localStorage.removeItem(OWNED);
-      localStorage.removeItem(WISH);
-      writeMeta(META, { schemaVersion: SCHEMA_VERSION });
-    }
-
-    setOwned(loadOwned(OWNED));
-    setWishlist(loadWish(WISH));
-  }, [email, OWNED, WISH, META]);
-
-  // persist on change
-  useEffect(() => { saveOwned(OWNED, owned); }, [OWNED, owned]);
-  useEffect(() => { saveWish(WISH, wishlist); }, [WISH, wishlist]);
-
-  /* ----- queries ----- */
-  const ownedCountForFigure = useCallback((figureId: string) => owned.filter(o => o.figureId === figureId).length, [owned]);
-  const ownedByFigure = useCallback((figureId: string) =>
-    owned.filter(o => o.figureId === figureId).sort((a,b)=> (Date.parse(b.purchasedAt||"")||0)-(Date.parse(a.purchasedAt||"")||0)), [owned]);
-  const ownedById = useCallback((ownedId: string) => owned.find(o => o.id === ownedId) ?? null, [owned]);
-  const isWished = useCallback((figureId: string) => wishlist.some(w => w.figureId === figureId), [wishlist]);
-  const wishFor  = useCallback((figureId: string) => wishlist.find(w => w.figureId === figureId) ?? null, [wishlist]);
-
-  /* ----- mutations ----- */
-  const addOwned = useCallback((p: AddOwnedPayload): OwnedEntry => {
-    const entry: OwnedEntry = {
-      id: uid(),
-      figureId: p.figureId,
-      currency: p.currency,
-      pricePaidCents: Math.max(0, Math.round(p.pricePaidCents ?? 0)),
-      taxCents: Math.max(0, Math.round(p.taxCents ?? 0)),
-      shippingCents: Math.max(0, Math.round(p.shippingCents ?? 0)),
-      store: p.store || undefined,
-      purchasedAt: p.purchasedAt || new Date().toISOString(),
-      fxPerEUR: p.fxPerEUR,
-    };
-    setOwned(list => [entry, ...list]);
-    // auto-remove wish unless wantAnother
-    setWishlist(list => {
-      const w = list.find(x => x.figureId === p.figureId);
-      if (w && !w.wantAnother) return list.filter(x => x.figureId !== p.figureId);
-      return list;
-    });
-    return entry;
+    refresh();
   }, []);
 
-  const updateOwned = useCallback((ownedId: string, patch: UpdateOwnedPatch) => {
-    setOwned(list =>
-      list.map(o =>
-        o.id === ownedId ? {
-          ...o,
-          ...(patch.pricePaidCents !== undefined ? { pricePaidCents: Math.max(0, Math.round(patch.pricePaidCents)) } : {}),
-          ...(patch.taxCents !== undefined ? { taxCents: Math.max(0, Math.round(patch.taxCents)) } : {}),
-          ...(patch.shippingCents !== undefined ? { shippingCents: Math.max(0, Math.round(patch.shippingCents)) } : {}),
-          ...(patch.currency ? { currency: patch.currency } : {}),
-          ...(patch.store !== undefined ? { store: patch.store || undefined } : {}),
-          ...(patch.purchasedAt !== undefined ? { purchasedAt: patch.purchasedAt || undefined } : {}),
-          ...(patch.fxPerEUR !== undefined ? { fxPerEUR: patch.fxPerEUR } : {}),
-        } : o
-      )
-    );
-  }, []);
+  const ownedById = (figureId: string) => owned.filter(o => o.figureId === figureId).length;
 
-  const sellOne = useCallback((figureId: string) => {
-    setOwned(list => {
-      const idx = list.findIndex(o => o.figureId === figureId);
-      if (idx === -1) return list;
-      const copy = list.slice(); copy.splice(idx, 1); return copy;
-    });
-  }, []);
+  const addOwned = async (figureId: string, input: Partial<OwnedRow>) => {
+    await sendJSON("/api/owned", "POST", { figureId, ...input });
+    await refresh();
+    document.dispatchEvent(new CustomEvent("owned:changed"));
+  };
+  const updateOwned = async (ownedId: string, input: Partial<OwnedRow>) => {
+    await sendJSON(`/api/owned/${ownedId}`, "PUT", input);
+    await refresh();
+    document.dispatchEvent(new CustomEvent("owned:changed"));
+  };
+  const deleteOwned = async (ownedId: string) => {
+    await sendJSON(`/api/owned/${ownedId}`, "DELETE");
+    await refresh();
+    document.dispatchEvent(new CustomEvent("owned:changed"));
+  };
 
-  const addWish = useCallback((figureId: string, data?: { wantAnother?: boolean; note?: string }) => {
-    setWishlist(list => {
-      const entry: WishEntry = { figureId, ...data };
-      const exists = list.some(w => w.figureId === figureId);
-      return exists ? list.map(w => (w.figureId === figureId ? entry : w)) : [...list, entry];
-    });
-  }, []);
+  const addWish = async (figureId: string, note?: string) => {
+    await sendJSON("/api/wishlist", "POST", { figureId, note });
+    await refresh();
+    document.dispatchEvent(new CustomEvent("wishlist:changed"));
+  };
+  const removeWish = async (wishId: string) => {
+    await sendJSON(`/api/wishlist/${wishId}`, "DELETE");
+    await refresh();
+    document.dispatchEvent(new CustomEvent("wishlist:changed"));
+  };
 
-  const removeWish = useCallback((figureId: string) => {
-    setWishlist(list => list.filter(w => w.figureId !== figureId));
-  }, []);
-
-  const resetLocalData = useCallback(() => {
-    localStorage.removeItem(OWNED);
-    localStorage.removeItem(WISH);
-    setOwned([]);
-    setWishlist([]);
-  }, [OWNED, WISH]);
-
-  const value = useMemo<CollectionContextType>(() => ({
-    owned, wishlist,
-    ownedCountForFigure, ownedByFigure, ownedById, isWished, wishFor,
-    addOwned, updateOwned, sellOne, addWish, removeWish,
-    resetLocalData,
-  }), [owned, wishlist, ownedCountForFigure, ownedByFigure, ownedById, isWished, wishFor, addOwned, updateOwned, sellOne, addWish, removeWish, resetLocalData]);
+  const value: Ctx = useMemo(() => ({
+    owned, wishlist, refresh, ownedById,
+    addOwned, updateOwned, deleteOwned,
+    addWish, removeWish,
+  }), [owned, wishlist]);
 
   return <CollectionContext.Provider value={value}>{children}</CollectionContext.Provider>;
 }
+export default CollectionProvider; // also export default
 
-export function useCollection(): CollectionContextType {
+export function useCollection() {
   const ctx = useContext(CollectionContext);
-  if (!ctx) throw new Error("useCollection must be used inside <CollectionProvider>");
+  if (!ctx) throw new Error("useCollection must be used within CollectionProvider");
   return ctx;
 }

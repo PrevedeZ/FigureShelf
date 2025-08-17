@@ -1,47 +1,73 @@
 "use client";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useCollection } from "./CollectionStore";
-import { useCurrency, formatCents } from "./CurrencyContext";
 import { useCatalog } from "./catalog";
+import { useCurrency, formatCents } from "./CurrencyContext";
+import type { CCY } from "./types";
 
-/** Dashboard cards with correct EUR normalization and display currency formatting */
+function asCCY(c: string): CCY {
+  const ok = ["EUR", "USD", "GBP", "JPY"] as const;
+  return (ok.includes(c as CCY) ? (c as CCY) : "EUR");
+}
+
 export default function DashboardSummary() {
   const { owned } = useCollection();
-  const { figures } = useCatalog();
-  const { toEurCents, fromEurCents, convert, currency } = useCurrency();
+  const { byId } = useCatalog();
+  const { toEurCents, fromEurCents, currency } = useCurrency();
+  const display = asCCY(currency);
 
-  const stats = useMemo(() => {
-    const copies = owned.length;
-    const unique = new Set(owned.map(o => o.figureId)).size;
+  const [dbCounts, setDbCounts] = useState({ copies: 0, unique: 0 });
 
-    // Spend: sum( (price+tax+ship) -> EUR ) then render in chosen display currency
-    let eurSpend = 0;
+  async function fetchSummary() {
+    const urls = ["/api/owned/summary", "/api/owned-summary"];
+    for (const url of urls) {
+      try {
+        const r = await fetch(url, { cache: "no-store", credentials: "include" });
+        if (!r.ok) continue;
+        const j = await r.json();
+        if (typeof j?.copies === "number" && typeof j?.unique === "number") {
+          setDbCounts({ copies: j.copies, unique: j.unique });
+          return;
+        }
+      } catch { /* try next */ }
+    }
+    setDbCounts({ copies: 0, unique: 0 });
+  }
+
+  useEffect(() => { fetchSummary(); }, []);
+  useEffect(() => {
+    const h = () => fetchSummary();
+    document.addEventListener("owned:changed", h);
+    return () => document.removeEventListener("owned:changed", h);
+  }, []);
+
+  // Spend (client-side)
+  const spendDispCents = useMemo(() => {
+    let eur = 0;
     for (const o of owned) {
-      const total = (o.pricePaidCents ?? 0) + (o.taxCents ?? 0) + (o.shippingCents ?? 0);
-      eurSpend += toEurCents(total, o.currency, o.fxPerEUR);
+      const line = (o.pricePaidCents ?? 0) + (o.taxCents ?? 0) + (o.shippingCents ?? 0);
+      eur += toEurCents(line, o.currency, o.fxPerEUR ?? undefined);
     }
-    const spendDisplay = fromEurCents(eurSpend, currency);
+    return fromEurCents(eur, display);
+  }, [owned, toEurCents, fromEurCents, display]);
 
-    // MSRP total (owned copies): find the figure’s MSRP, convert from its MSRP currency to display currency, multiply by copies count
-    let msrpCopiesDisplay = 0;
-    if (figures && figures.length) {
-      const byId = new Map(figures.map(f => [f.id, f]));
-      for (const o of owned) {
-        const f = byId.get(o.figureId);
-        if (!f) continue;
-        msrpCopiesDisplay += convert(f.msrpCents, f.msrpCurrency as any, currency);
-      }
+  // MSRP copies
+  const msrpDispCents = useMemo(() => {
+    let eur = 0;
+    for (const o of owned) {
+      const f = byId.get(o.figureId);
+      if (!f) continue;
+      eur += toEurCents(f.msrpCents, f.msrpCurrency as CCY, 1);
     }
-
-    return { copies, unique, spendDisplay, msrpCopiesDisplay };
-  }, [owned, figures, toEurCents, fromEurCents, convert, currency]);
+    return fromEurCents(eur, display);
+  }, [owned, byId, toEurCents, fromEurCents, display]);
 
   return (
-    <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
-      <Card label="Owned (unique)" value={String(stats.unique)} />
-      <Card label="Owned (copies)" value={String(stats.copies)} />
-      <Card label="Spend" value={formatCents(stats.spendDisplay, currency)} />
-      <Card label="MSRP (copies)" value={formatCents(stats.msrpCopiesDisplay, currency)} />
+    <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <Card label="Owned (unique)" value={String(dbCounts.unique)} />
+      <Card label="Owned (copies)" value={String(dbCounts.copies)} />
+      <Card label="Spend" value={formatCents(spendDispCents, display)} />
+      <Card label="MSRP (copies)" value={formatCents(msrpDispCents, display)} />
     </section>
   );
 }
@@ -49,8 +75,8 @@ export default function DashboardSummary() {
 function Card({ label, value }: { label: string; value: string }) {
   return (
     <div className="card p-4">
-      <div className="text-xs text-gray-600">{label}</div>
-      <div className="mt-1 text-2xl font-semibold text-center">{value}</div>
+      <div className="text-[11px] uppercase tracking-wide text-gray-600">{label}</div>
+      <div className="mt-1 text-2xl font-semibold">{value}</div>
     </div>
   );
 }
