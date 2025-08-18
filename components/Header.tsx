@@ -1,155 +1,129 @@
 "use client";
+
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useSession, signOut } from "next-auth/react";
-import { useRef, useState } from "react";
-import SeriesQuickView from "./SeriesQuickView";
+import { useEffect, useRef, useState } from "react";
+import { useSession, signIn, signOut } from "next-auth/react";
 
 export default function Header() {
-  const { data } = useSession();
-  const pathname = usePathname();
-  const isAdmin = (data?.user as any)?.role === "ADMIN";
-  const userEmail = (data?.user as any)?.email as string | undefined;
+  const { data: session } = useSession();
+  const isAdmin = (session?.user as any)?.role === "ADMIN";
 
-  const [seriesOpen, setSeriesOpen] = useState(false);
-  const [accountOpen, setAccountOpen] = useState(false);
-  const seriesCloseT = useRef<number | null>(null);
-  const accountCloseT = useRef<number | null>(null);
+  // dropdown state with tiny delay to avoid flicker
+  const [open, setOpen] = useState(false);
+  const timerRef = useRef<number | null>(null);
 
-  const openSeries = () => {
-    if (seriesCloseT.current) window.clearTimeout(seriesCloseT.current);
-    setSeriesOpen(true);
+  const cancelClose = () => {
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
   };
-  const closeSeries = () => {
-    // tiny delay makes it feel less “twitchy” when moving diagonally
-    seriesCloseT.current = window.setTimeout(() => setSeriesOpen(false), 120) as unknown as number;
-  };
-
-  const openAccount = () => {
-    if (accountCloseT.current) window.clearTimeout(accountCloseT.current);
-    setAccountOpen(true);
-  };
-  const closeAccount = () => {
-    accountCloseT.current = window.setTimeout(() => setAccountOpen(false), 120) as unknown as number;
+  const scheduleClose = () => {
+    cancelClose();
+    timerRef.current = window.setTimeout(() => setOpen(false), 150);
   };
 
-  const NavLink = ({ href, label }: { href: string; label: string }) => {
-    const active = pathname === href;
-    return (
-      <Link
-        href={href}
-        className={`px-3 py-2 rounded-md text-sm ${
-          active ? "bg-[var(--panel)] font-semibold" : "hover:bg-[var(--panel)]"
-        }`}
-      >
-        {label}
-      </Link>
-    );
-  };
+  // close on ESC
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
-    <header className="border-b border-[var(--border)] bg-white">
-      <div className="mx-auto max-w-7xl px-4 h-14 flex items-center gap-3">
+    <header className="sticky top-0 z-50 bg-white/80 backdrop-blur border-b border-[var(--border)]">
+      <div className="mx-auto max-w-7xl px-4 h-14 flex items-center gap-4">
         {/* Brand */}
-        <Link href="/" className="font-semibold">SHF Catalog</Link>
+        <Link href="/" className="flex items-center gap-2 font-semibold text-lg">
+          {/* simple logo dot — swap with an <Image> later if you have one */}
+          <span className="inline-block h-3 w-3 rounded-full bg-[var(--accent)]" />
+          FigureShelf
+        </Link>
 
-        {/* Left nav */}
-        <nav className="ml-4 flex items-center gap-1 relative">
-          <NavLink href="/" label="All Figures" />
-
-          {/* Series link with controlled hover dropdown */}
-          <div
-            className="relative"
-            onMouseEnter={openSeries}
-            onMouseLeave={closeSeries}
-            onFocus={openSeries}
-            onBlur={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node)) closeSeries();
-            }}
-          >
-            <NavLink href="/series" label="Series" />
-            <SeriesQuickView open={seriesOpen} />
-          </div>
+        {/* Nav (add more links as needed) */}
+        <nav className="ml-6 hidden sm:flex items-center gap-4 text-sm">
+          <Link className="hover:underline" href="/">All Figures</Link>
+          <Link className="hover:underline" href="/series">Series</Link>
+          {isAdmin && <Link className="hover:underline" href="/admin">Admin</Link>}
         </nav>
 
-        {/* Right side: My Account */}
-        <div className="ml-auto flex items-center gap-2">
-          {data?.user ? (
+        <div className="ml-auto" />
+
+        {/* Account dropdown (hover OR click; stays open while hovering the panel) */}
+        <div
+          className="relative"
+          onMouseEnter={() => { cancelClose(); setOpen(true); }}
+          onMouseLeave={scheduleClose}
+        >
+          <button
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={open}
+            onClick={() => setOpen(v => !v)} // for touch/click users
+            className="h-9 px-3 rounded-md border border-[var(--border)] bg-white hover:bg-gray-50 text-sm"
+          >
+            {session?.user?.email ?? "My Account"}
+          </button>
+
+          {open && (
             <div
-              className="relative"
-              onMouseEnter={openAccount}
-              onMouseLeave={closeAccount}
-              onFocus={openAccount}
-              onBlur={(e) => {
-                if (!e.currentTarget.contains(e.relatedTarget as Node)) closeAccount();
-              }}
+              role="menu"
+              className="absolute right-0 mt-2 w-48 rounded-lg border border-[var(--border)] bg-white shadow-lg z-50 p-1"
+              // keep open when moving between items
+              onMouseEnter={cancelClose}
+              onMouseLeave={scheduleClose}
             >
-              {/* Trigger */}
-              <button
-                className="h-9 px-3 rounded-md border border-[var(--border)] bg-white hover:bg-[var(--panel)] text-sm flex items-center gap-2"
-                type="button"
-                aria-haspopup="menu"
-                aria-expanded={accountOpen}
-              >
-                <Avatar email={userEmail} />
-                <span className="hidden sm:inline">{userEmail}</span>
-                <span className="text-gray-500">▾</span>
-              </button>
-
-              {/* Dropdown */}
-              <div
-                className={`absolute right-0 mt-2 w-56 rounded-xl border border-[var(--border)] bg-white shadow-card p-2 z-50 ${
-                  accountOpen ? "block" : "hidden"
-                }`}
-                role="menu"
-              >
-                <Link
-                  href="/account"
-                  className="block w-full text-left px-3 py-2 rounded-md hover:bg-gray-50 text-sm"
-                  role="menuitem"
-                >
-                  My Data
-                </Link>
-
-                {isAdmin && (
-                  <button
-                    className="w-full text-left px-3 py-2 rounded-md hover:bg-gray-50 text-sm"
-                    onClick={() =>
-                      document.dispatchEvent(
-                        new CustomEvent("admin:open", { detail: { tab: "catalog" } })
-                      )
-                    }
+              {session ? (
+                <>
+                  <Link
                     role="menuitem"
+                    href="/account"
+                    className="block px-3 py-2 rounded-md hover:bg-gray-50 text-sm"
+                    onClick={() => setOpen(false)}
                   >
-                    Admin Dock
+                    Account
+                  </Link>
+                  {isAdmin && (
+                    <Link
+                      role="menuitem"
+                      href="/admin"
+                      className="block px-3 py-2 rounded-md hover:bg-gray-50 text-sm"
+                      onClick={() => setOpen(false)}
+                    >
+                      Admin Dock
+                    </Link>
+                  )}
+                  <button
+                    role="menuitem"
+                    className="w-full text-left px-3 py-2 rounded-md hover:bg-gray-50 text-sm"
+                    onClick={() => { setOpen(false); signOut(); }}
+                  >
+                    Sign out
                   </button>
-                )}
-
-                <button
-                  className="w-full text-left px-3 py-2 rounded-md hover:bg-gray-50 text-sm"
-                  onClick={() => signOut({ callbackUrl: "/" })}
-                  role="menuitem"
-                >
-                  Sign Out
-                </button>
-              </div>
+                </>
+              ) : (
+                <>
+                  <button
+                    role="menuitem"
+                    className="w-full text-left px-3 py-2 rounded-md hover:bg-gray-50 text-sm"
+                    onClick={() => { setOpen(false); signIn(); }}
+                  >
+                    Sign in
+                  </button>
+                  <Link
+                    role="menuitem"
+                    href="/register"
+                    className="block px-3 py-2 rounded-md hover:bg-gray-50 text-sm"
+                    onClick={() => setOpen(false)}
+                  >
+                    Register
+                  </Link>
+                </>
+              )}
             </div>
-          ) : (
-            <Link className="btn btn-primary h-9" href="/auth/signin">
-              Sign in
-            </Link>
           )}
         </div>
       </div>
     </header>
-  );
-}
-
-function Avatar({ email }: { email?: string }) {
-  const letter = (email?.trim()?.[0] || "?").toUpperCase();
-  return (
-    <span className="inline-grid place-items-center w-6 h-6 rounded-full bg-[var(--panel)] border border-[var(--border)] text-[11px] font-semibold">
-      {letter}
-    </span>
   );
 }

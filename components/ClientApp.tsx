@@ -1,29 +1,21 @@
+// components/ClientApp.tsx
 "use client";
 
-import React from "react";
+import type { ReactNode } from "react";
 import { SessionProvider } from "next-auth/react";
-
-// Providers
+import Header from "./Header";
 import { CurrencyProvider } from "./CurrencyContext";
 import { CatalogProvider } from "./catalog";
 import { CollectionProvider } from "./CollectionStore";
 
-// Shell
-import Header from "./Header";
-import AdminDock from "./AdminDock";
-
-export default function ClientRoot({ children }: { children: React.ReactNode }) {
+export default function ClientApp({ children }: { children: ReactNode }) {
   return (
     <SessionProvider>
       <CurrencyProvider>
         <CatalogProvider>
           <CollectionProvider>
-            {/* Top Bar once here */}
             <Header />
-            {/* Page content */}
             <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
-            {/* Global Admin Dock (mounted once, opened via event) */}
-            <AdminDock />
           </CollectionProvider>
         </CatalogProvider>
       </CurrencyProvider>

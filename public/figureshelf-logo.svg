@@ -1,0 +1,20 @@
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6EE7B7"></stop>
+      <stop offset="100%" stop-color="#3B82F6"></stop>
+    </linearGradient>
+  </defs>
+  <rect rx="56" ry="56" x="16" y="16" width="224" height="224" fill="url(#g)"></rect>
+  <!-- Shelf -->
+  <rect x="56" y="160" width="144" height="16" rx="8" fill="#0F172A" opacity="0.85"></rect>
+  <!-- Figure silhouette -->
+  <circle cx="128" cy="96" r="22" fill="#0F172A" opacity="0.9"></circle>
+  <path d="M96 152c0-18 14-32 32-32s32 14 32 32v8H96v-8z" fill="#0F172A" opacity="0.9"></path>
+  <!-- FS monogram -->
+  <g transform="translate(172,172)">
+    <circle cx="0" cy="0" r="28" fill="white" opacity="0.9"></circle>
+    <path d="M-12 -6h16v4h-12v6h10v4h-10v8h-4v-22z" fill="#0F172A"></path>
+    <path d="M4 -6h14c4 0 8 3 8 8s-4 8-8 8H8v6H4v-22zm4 4v8h10c2 0 4-2 4-4s-2-4-4-4H8z" fill="#0F172A"></path>
+  </g>
+</svg>

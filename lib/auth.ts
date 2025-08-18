@@ -1,27 +1,39 @@
+// lib/auth.ts
 import type { NextAuthOptions } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { prisma } from "./prisma";
 import bcrypt from "bcryptjs";
+import { prisma } from "./prisma";
 
 export const authOptions: NextAuthOptions = {
   session: { strategy: "jwt" },
+  pages: { signIn: "/auth/signin" },
   providers: [
     Credentials({
       name: "Credentials",
-      credentials: { email: { label: "Email", type: "email" }, password: { label: "Password", type: "password" } },
-      async authorize(credentials) {
-        const email = credentials?.email?.toLowerCase().trim();
-        const password = credentials?.password ?? "";
+      credentials: {
+        email: { label: "Email", type: "email" },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(creds) {
+        const email = creds?.email?.toString().trim().toLowerCase();
+        const password = creds?.password?.toString() ?? "";
         if (!email || !password) return null;
+
         const user = await prisma.user.findUnique({ where: { email } });
         if (!user) return null;
+
         const ok = await bcrypt.compare(password, user.password);
         if (!ok) return null;
-        return { id: user.id, email: user.email, name: user.name ?? user.email.split("@")[0], role: user.role };
+
+        return {
+          id: user.id,
+          email: user.email,
+          name: user.name ?? undefined,
+          role: user.role,
+        } as any;
       },
     }),
   ],
-  pages: { signIn: "/login" },
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
@@ -31,8 +43,10 @@ export const authOptions: NextAuthOptions = {
       return token;
     },
     async session({ session, token }) {
-      if (token?.id) (session.user as any).id = token.id;
-      if (token?.role) (session.user as any).role = token.role;
+      if (session.user) {
+        (session.user as any).id = token.id as string | undefined;
+        (session.user as any).role = token.role as "USER" | "ADMIN" | undefined;
+      }
       return session;
     },
   },

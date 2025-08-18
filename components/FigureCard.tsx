@@ -1,49 +1,69 @@
 "use client";
-import type { Figure, CCY } from "./types";
+import Image from "next/image";
 import { useCollection } from "./CollectionStore";
-import { formatCents } from "./CurrencyContext";
+import { useCurrency, formatCents } from "./CurrencyContext";
+import type { Figure } from "./types";
 
-export default function FigureCard({ fig }: { fig: Figure }) {
-  const { addOwned, removeOneOwnedByFigure, addWish, ownedIdsByFigure } = useCollection();
-  const qty = ownedIdsByFigure(fig.id).length;
+type Props = {
+  fig: Figure;
+  onAdd: (f: Figure) => void;
+  onEditOwned: (ownedId: string, f: Figure) => void;
+  /** you call this from FiguresGrid – we keep both names */
+  onWishlist?: () => void;
+  onOpenWish?: (f: Figure) => void;
+  onManageOwned: (f: Figure) => void;
+};
+
+export default function FigureCard({
+  fig,
+  onAdd,
+  onEditOwned,
+  onWishlist,
+  onOpenWish,
+  onManageOwned,
+}: Props) {
+  const { convert, currency } = useCurrency();
+  const { isWished, wishFor, ownedCountForFigure, removeWish } = useCollection();
+
+  const msrp = convert(fig.msrpCents, fig.msrpCurrency, currency);
+  const ownedCount = ownedCountForFigure(fig.id);
+  const wished = isWished(fig.id);
+  const wish = wishFor(fig.id);
+
+  const triggerWish = () => {
+    if (onWishlist) onWishlist();
+    else if (onOpenWish) onOpenWish(fig);
+  };
 
   return (
     <div className="card overflow-hidden">
-      <div className="relative">
-        <img src={fig.image} alt={fig.name} className="w-full h-72 object-cover" />
-        <div className="absolute top-2 left-2 text-xs px-2 py-1 rounded-full bg-white/90">
-          {fig.series}
+      <div className="relative h-64">
+        <Image src={fig.image} alt={fig.name} fill className="object-cover" />
+        <div className="absolute left-2 top-2 flex gap-2">
+          <span className="badge">{fig.series}</span>
+          {fig.releaseType && <span className="badge">{fig.releaseType}</span>}
+          {ownedCount > 0 && <span className="badge">Owned ×{ownedCount}</span>}
+          {!ownedCount && wished && <span className="badge">Wish</span>}
+          {ownedCount && wished && !wish?.wantAnother && <span className="badge">Wish (Owned)</span>}
         </div>
-        {qty > 0 && (
-          <div className="absolute top-2 right-2 text-xs px-2 py-1 rounded-full bg-white/90">
-            Owned ×{qty}
-          </div>
-        )}
       </div>
 
-      <div className="p-3">
-        <div className="text-center font-semibold">{fig.name}</div>
-        <div className="text-center text-sm text-gray-600">
-          {fig.character} · {fig.releaseYear}
+      <div className="p-3 space-y-1">
+        <div className="font-medium">{fig.name}</div>
+        <div className="text-sm text-gray-600">
+          {(fig.characterBase ?? fig.character)}
+          {fig.variant ? ` (${fig.variant})` : ""} · {fig.releaseYear}
         </div>
-        <div className="mt-1 text-center text-sm">
-          MSRP {formatCents(fig.msrpCents, fig.msrpCurrency as CCY)}
-        </div>
-
-        <div className="mt-3 flex items-center justify-center gap-2">
-          <button className="btn btn-ghost h-9" disabled={qty === 0}
-                  onClick={() => removeOneOwnedByFigure(fig.id)}>−</button>
-          <span className="px-3">{qty}</span>
-          <button className="btn btn-ghost h-9" onClick={() => addOwned(fig.id)}>+</button>
-        </div>
+        <div className="text-sm text-gray-800">{formatCents(msrp, currency)}</div>
 
         <div className="mt-2 flex gap-2">
-          <button className="btn btn-primary h-9 flex-1" onClick={() => addOwned(fig.id)}>
-            Add another
-          </button>
-          <button className="btn btn-ghost h-9" onClick={() => addWish(fig.id)}>
-            Wishlist
-          </button>
+          <button className="btn btn-primary" onClick={() => onAdd(fig)}>{ownedCount ? "Add another" : "Add"}</button>
+          {wished
+            ? <button className="btn btn-ghost" onClick={() => removeWish(fig.id)}>Remove wish</button>
+            : <button className="btn btn-ghost" onClick={triggerWish}>Wishlist</button>}
+          {ownedCount > 0 && (
+            <button className="btn btn-ghost" onClick={() => onManageOwned(fig)}>Manage</button>
+          )}
         </div>
       </div>
     </div>

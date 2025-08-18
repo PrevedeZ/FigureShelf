@@ -1,21 +1,65 @@
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../auth/[...nextauth]/route";
 import { prisma } from "../../../lib/prisma";
 
-export async function POST(req: Request) {
+// GET /api/wishlist  (list for current user)
+export async function GET() {
   const session = await getServerSession(authOptions);
-  const email = session?.user?.email;
-  if (!email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session?.user?.id) return NextResponse.json([], { status: 200 });
 
-  const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const list = await prisma.wishlist.findMany({
+    where: { userId: session.user.id },
+    orderBy: { createdAt: "desc" },
+  });
+  return NextResponse.json(list, { status: 200 });
+}
+
+// POST /api/wishlist  (create or update note/wantAnother)
+export async function POST(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const body = await req.json().catch(() => ({}));
-  const figureId = String(body.figureId || "");
-  const note = body.note ? String(body.note) : undefined;
-  if (!figureId) return NextResponse.json({ error: "figureId required" }, { status: 400 });
+  const figureId: string | undefined =
+    typeof body?.figureId === "string"
+      ? body.figureId
+      : typeof body?.id === "string"
+      ? body.id
+      : undefined;
 
-  const row = await prisma.wishlist.create({ data: { userId: user.id, figureId, note } });
-  return NextResponse.json({ row });
+  if (!figureId) {
+    return NextResponse.json({ error: "figureId is required" }, { status: 400 });
+  }
+
+  const existing = await prisma.wishlist.findFirst({
+    where: { userId: session.user.id, figureId },
+  });
+
+  const wish = existing
+    ? await prisma.wishlist.update({
+        where: { id: existing.id },
+        data: {
+          wantAnother:
+            body.wantAnother === undefined ? existing.wantAnother : !!body.wantAnother,
+          note:
+            body.note === undefined
+              ? existing.note
+              : body.note === null
+              ? null
+              : String(body.note),
+        },
+      })
+    : await prisma.wishlist.create({
+        data: {
+          userId: session.user.id,
+          figureId,
+          wantAnother: !!body.wantAnother,
+          note: body.note === undefined ? null : String(body.note),
+        },
+      });
+
+  return NextResponse.json({ wish }, { status: 200 });
 }

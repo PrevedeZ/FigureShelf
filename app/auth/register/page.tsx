@@ -3,14 +3,10 @@
 import { useState } from "react";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 
-export default function SignInPage() {
-  const params = useSearchParams();
-  const callbackUrl = params.get("callbackUrl") ?? "/";
-  const urlError = params.get("error"); // NextAuth error codes in URL
-
+export default function RegisterPage() {
   const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -19,29 +15,48 @@ export default function SignInPage() {
     e.preventDefault();
     setErr(null);
     setLoading(true);
+    try {
+      const r = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, name, password }),
+      });
 
-    const res = await signIn("credentials", {
-      email,
-      password,
-      redirect: true,
-      callbackUrl,
-    });
+      const j = await r.json();
+      if (!r.ok) {
+        setErr(j?.error || "Could not register");
+        return;
+      }
 
-    // If redirect is true, NextAuth will navigate.
-    // If it returns here, it's an error or redirect=false.
-    if (res?.error) setErr("Invalid email or password");
-    setLoading(false);
+      // sign them in immediately using credentials provider
+      await signIn("credentials", {
+        email,
+        password,
+        redirect: true,
+        callbackUrl: "/", // send to home after login
+      });
+    } catch (e) {
+      setErr("Unexpected error");
+    } finally {
+      setLoading(false);
+    }
   }
-
-  const friendlyUrlError =
-    urlError === "CredentialsSignin" ? "Invalid email or password" :
-    urlError ? "Sign in failed" : null;
 
   return (
     <div className="mx-auto max-w-md p-6">
-      <h1 className="text-xl font-semibold mb-4">Sign in</h1>
+      <h1 className="text-xl font-semibold mb-4">Create account</h1>
 
       <form onSubmit={onSubmit} className="space-y-3">
+        <div>
+          <label className="text-sm text-gray-600">Name (optional)</label>
+          <input
+            className="field w-full"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Your name"
+          />
+        </div>
+
         <div>
           <label className="text-sm text-gray-600">Email</label>
           <input
@@ -61,29 +76,20 @@ export default function SignInPage() {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
+            placeholder="At least 8 characters"
             required
             minLength={8}
           />
         </div>
 
-        {(err || friendlyUrlError) && (
-          <div className="text-sm text-red-600">
-            {err || friendlyUrlError}
-          </div>
-        )}
+        {err && <div className="text-sm text-red-600">{err}</div>}
 
         <div className="flex items-center gap-2">
           <button className="btn btn-primary" type="submit" disabled={loading}>
-            {loading ? "Signing in…" : "Sign in"}
+            {loading ? "Creating…" : "Create account"}
           </button>
-
-          {/* <-- New: Register option */}
-          <Link
-            href={`/auth/register?callbackUrl=${encodeURIComponent(callbackUrl)}`}
-            className="btn btn-ghost"
-          >
-            Register
+          <Link href="/auth/signin" className="btn btn-ghost">
+            Sign in
           </Link>
         </div>
       </form>

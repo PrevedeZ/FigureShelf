@@ -3,69 +3,80 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { Figure } from "./types";
 
-/* Helpers kept for compatibility */
-export function splitCharacter(input: string): { base: string; variant?: string } {
-  if (!input) return { base: "" };
-  const paren = input.match(/^(.*)\((.*)\)\s*$/);
-  if (paren) {
-    const base = paren[1].trim().replace(/[–-]\s*$/, "").trim();
-    const variant = paren[2].trim();
-    return { base, variant: variant || undefined };
-  }
-  const parts = input.split(/[-–:•]| {2,}/).map(s => s.trim()).filter(Boolean);
-  if (parts.length > 1) return { base: parts[0], variant: parts.slice(1).join(" ") };
-  return { base: input.trim() };
+/* ---------- helpers ---------- */
+/** "Son Goku (Super Saiyan)" -> { base: "Son Goku", variant: "Super Saiyan" } */
+export function splitCharacter(input: string): { base: string; variant: string | null } {
+  const m = (input ?? "").match(/^\s*(.*?)\s*(?:\((.*?)\))?\s*$/);
+  const base = (m?.[1] ?? input ?? "").trim();
+  const variant = (m?.[2] ?? "").trim();
+  return { base, variant: variant ? variant : null };
 }
 
-type CatalogCtx = {
-  figures: Figure[];
+/* ---------- context ---------- */
+type Ctx = {
+  figures: Figure[] | null;
   series: string[];
   byId: Map<string, Figure>;
   loading: boolean;
+  /** refresh function (new name) */
   refresh: () => Promise<void>;
+  /** refresh function (legacy name used by AdminDock) */
+  refreshCatalog: () => Promise<void>;
 };
 
-const CatalogContext = createContext<CatalogCtx | null>(null);
+const CatalogContext = createContext<Ctx | null>(null);
 
 export function CatalogProvider({ children }: { children: React.ReactNode }) {
-  const [figures, setFigures] = useState<Figure[]>([]);
-  const [series, setSeries] = useState<string[]>([]);
+  const [figures, setFigures] = useState<Figure[] | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const refresh = async () => {
+  const fetchCatalog = async () => {
     setLoading(true);
     try {
-      const r = await fetch("/api/catalog", { cache: "no-store" });
-      const j = await r.json().catch(() => ({}));
-      setFigures(Array.isArray(j.figures) ? j.figures : []);
-      setSeries(Array.isArray(j.series) ? j.series : []);
+      const r = await fetch("/api/catalog", { cache: "no-store", credentials: "include" });
+      const j = await r.json();
+      setFigures(Array.isArray(j?.figures) ? j.figures : []);
+    } catch {
+      setFigures([]);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    refresh();
-    const onChange = () => refresh();
-    document.addEventListener("admin:catalog:changed", onChange);
-    document.addEventListener("catalog:refresh", onChange);
-    return () => {
-      document.removeEventListener("admin:catalog:changed", onChange);
-      document.removeEventListener("catalog:refresh", onChange);
-    };
+    fetchCatalog();
   }, []);
 
-  const byId = useMemo(() => new Map(figures.map(f => [f.id, f] as const)), [figures]);
+  const series = useMemo(() => {
+    if (!figures) return [];
+    const s = new Set<string>();
+    for (const f of figures) s.add(f.series);
+    return [...s].sort((a, b) => a.localeCompare(b));
+  }, [figures]);
 
-  return (
-    <CatalogContext.Provider value={{ figures, series, byId, loading, refresh }}>
-      {children}
-    </CatalogContext.Provider>
-  );
+  const byId = useMemo(() => {
+    const m = new Map<string, Figure>();
+    for (const f of figures ?? []) m.set(f.id, f);
+    return m;
+  }, [figures]);
+
+  const value: Ctx = {
+    figures,
+    series,
+    byId,
+    loading,
+    refresh: fetchCatalog,
+    refreshCatalog: fetchCatalog, // alias for backward compatibility
+  };
+
+  return <CatalogContext.Provider value={value}>{children}</CatalogContext.Provider>;
 }
-export default CatalogProvider; // also export default
-export function useCatalog() {
+
+// keep both default and named exports to match imports elsewhere
+export default CatalogProvider;
+
+export function useCatalog(): Ctx {
   const ctx = useContext(CatalogContext);
-  if (!ctx) throw new Error("useCatalog must be used within CatalogProvider");
+  if (!ctx) throw new Error("useCatalog must be used within <CatalogProvider>");
   return ctx;
 }

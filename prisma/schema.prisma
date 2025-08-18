@@ -1,3 +1,4 @@
+// ---------- generator & datasource ----------
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,6 +8,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ---------- enums ----------
 enum Role {
   USER
   ADMIN
@@ -21,11 +23,36 @@ enum Currency {
 
 enum ReleaseType {
   retail
-  tamashii_web
+  web_exclusive
   event_exclusive
   sdcc
+  reissue
+  unknown
 }
 
+enum BodyVersion {
+  V1_0
+  V2_0
+  V3_0
+  OTHER
+}
+
+enum Condition {
+  NEW
+  LIKE_NEW
+  OPEN_BOX
+  USED
+  DAMAGED
+}
+
+enum BoxCondition {
+  SEALED
+  OPENED
+  WORN
+  DAMAGED
+}
+
+// ---------- models ----------
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
@@ -34,19 +61,35 @@ model User {
   role      Role     @default(USER)
   createdAt DateTime @default(now())
 
-  owned  Owned[]
-  wishes Wishlist[]
+  owned   Owned[]
+  wishes  Wishlist[]
+  profile Profile?
+
+  @@index([role])
+}
+
+model Profile {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  preferredCurrency Currency @default(EUR)
+  timezone          String?
+  data              Json?
+
+  user User @relation(fields: [userId], references: [id])
 }
 
 model Series {
   id        String   @id @default(cuid())
   name      String   @unique
+  slug      String   @unique @default(cuid()) // REQUIRED + UNIQUE now
   createdAt DateTime @default(now())
   figures   Figure[]
 }
 
 model Figure {
-  id            String       @id @default(cuid())
+  id   String @id @default(cuid())
+  slug String @unique @default(cuid()) // REQUIRED + UNIQUE now
+
   name          String
   character     String
   characterBase String?
@@ -54,51 +97,99 @@ model Figure {
   line          String
   image         String
   releaseYear   Int
-  releaseType   ReleaseType?
-  bodyVersion   String?
-  saga          String?
-  msrpCents     Int
-  msrpCurrency  Currency
-  seriesId      String
-  series        Series       @relation(fields: [seriesId], references: [id])
+  releaseType   ReleaseType? @default(retail)
+
+  bodyVersionTag String?
+  bodyVersion    BodyVersion? @default(OTHER)
+
+  saga String?
+
+  msrpCents    Int
+  msrpCurrency Currency
+
+  seriesId String
+  series   Series @relation(fields: [seriesId], references: [id])
 
   owned    Owned[]
   wishedBy Wishlist[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
   @@index([seriesId])
   @@index([characterBase])
   @@index([variant])
   @@index([seriesId, characterBase])
+  @@index([releaseYear])
 }
 
 model Owned {
-  id             String   @id @default(cuid())
-  userId         String
-  figureId       String
+  id       String @id @default(cuid())
+  userId   String
+  figureId String
+
   currency       Currency
   pricePaidCents Int      @default(0)
   taxCents       Int      @default(0)
   shippingCents  Int      @default(0)
-  fxPerEUR       Float?
-  createdAt      DateTime @default(now())
+
+  fxPerEUR Float?
+
+  acquiredAt   DateTime?     @default(now())
+  source       String?
+  condition    Condition?
+  boxCondition BoxCondition?
+  location     String?
+  note         String?
+
+  isSold         Boolean   @default(false)
+  soldAt         DateTime?
+  soldPriceCents Int?
+  soldCurrency   Currency?
+  soldNote       String?
+
+  data      Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
   user   User   @relation(fields: [userId], references: [id])
   figure Figure @relation(fields: [figureId], references: [id])
 
+  @@index([userId])
+  @@index([figureId])
+  @@index([isSold])
+}
+
+model Wishlist {
+  id       String @id @default(cuid())
+  userId   String
+  figureId String
+
+  wantAnother Boolean @default(false)
+
+  priority          Int       @default(0)
+  targetPriceCents  Int?
+  targetCurrency    Currency?
+  notifyBelowTarget Boolean   @default(false)
+
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id])
+  figure Figure @relation(fields: [figureId], references: [id])
+
+  @@unique([userId, figureId])
   @@index([userId])
   @@index([figureId])
 }
 
-model Wishlist {
+model FxRate {
   id        String   @id @default(cuid())
-  userId    String
-  figureId  String
-  note      String?
+  date      DateTime
+  ccy       Currency
+  perEUR    Float
   createdAt DateTime @default(now())
 
-  user   User   @relation(fields: [userId], references: [id])
-  figure Figure @relation(fields: [figureId], references: [id])
-
-  @@index([userId])
-  @@index([figureId])
+  @@unique([date, ccy])
 }

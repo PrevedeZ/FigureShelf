@@ -4,18 +4,11 @@ import { authOptions } from "../auth/[...nextauth]/route";
 import { prisma } from "../../../lib/prisma";
 
 type Currency = "EUR" | "USD" | "GBP" | "JPY";
-
-function toInt(v: unknown, d = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.trunc(n) : d;
-}
+const toInt = (v: unknown, d = 0) => (Number.isFinite(Number(v)) ? Math.trunc(Number(v)) : d);
 
 function parseBody(raw: any) {
-  // accept several shapes, be very forgiving
   const b = typeof raw === "object" && raw ? raw : {};
-  const figureId =
-    b.figureId ?? b.figure_id ?? b.id ?? b?.owned?.figureId ?? b?.owned?.figure_id;
-
+  const figureId = b.figureId ?? b.figure_id ?? b.id ?? b?.owned?.figureId ?? b?.owned?.figure_id;
   const currency: Currency =
     (b.currency ?? b?.owned?.currency ?? "EUR").toString().toUpperCase();
 
@@ -31,33 +24,19 @@ function parseBody(raw: any) {
       b.fxPerEUR === null || b.fxPerEUR === undefined
         ? null
         : Number(b.fxPerEUR) || null,
-    note:
-      typeof b.note === "string"
-        ? b.note
-        : typeof b?.owned?.note === "string"
-        ? b.owned.note
-        : null,
+    note: typeof b.note === "string" ? b.note : null,
   };
 }
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const raw = await req.json().catch(() => ({}));
-  const body = parseBody(raw);
+  const body = parseBody(await req.json().catch(() => ({})));
+  if (!body.figureId) return NextResponse.json({ error: "figureId is required" }, { status: 400 });
 
-  if (!body.figureId) {
-    return NextResponse.json({ error: "figureId is required" }, { status: 400 });
-  }
-
-  // ensure figure exists
   const fig = await prisma.figure.findUnique({ where: { id: body.figureId } });
-  if (!fig) {
-    return NextResponse.json({ error: "Figure not found" }, { status: 404 });
-  }
+  if (!fig) return NextResponse.json({ error: "Figure not found" }, { status: 404 });
 
   const created = await prisma.owned.create({
     data: {

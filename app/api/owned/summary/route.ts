@@ -1,22 +1,26 @@
+// app/api/owned/summary/route.ts
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "../../auth/[...nextauth]/route";
+import { authOptions } from "../../../../lib/auth";
 import { prisma } from "../../../../lib/prisma";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-  const email = session?.user?.email;
-  if (!email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session?.user?.email) {
+    return NextResponse.json({ copies: 0, unique: 0 });
+  }
+  const user = await prisma.user.findUnique({
+    where: { email: session.user.email! },
+    select: { id: true },
+  });
+  if (!user) return NextResponse.json({ copies: 0, unique: 0 });
 
-  const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const copies = await (prisma as any).owned.count({ where: { userId: user.id } });
-  const distinct = await (prisma as any).owned.findMany({
+  const copies = await prisma.owned.count({ where: { userId: user.id } });
+  const uniqueFigures = await prisma.owned.findMany({
     where: { userId: user.id },
-    distinct: ["figureId"],
     select: { figureId: true },
+    distinct: ["figureId"],
   });
 
-  return NextResponse.json({ copies, unique: distinct.length });
+  return NextResponse.json({ copies, unique: uniqueFigures.length });
 }

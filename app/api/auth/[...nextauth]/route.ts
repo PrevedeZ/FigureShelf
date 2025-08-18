@@ -24,7 +24,12 @@ export const authOptions: NextAuthOptions = {
         const ok = await bcrypt.compare(password, user.password);
         if (!ok) return null;
 
-        return { id: user.id, email: user.email, name: user.name ?? undefined, role: user.role } as any;
+        return {
+          id: user.id,
+          email: user.email,
+          name: user.name ?? undefined,
+          role: user.role,
+        } as any;
       },
     }),
   ],
@@ -47,4 +52,6 @@ export const authOptions: NextAuthOptions = {
 };
 
 const handler = NextAuth(authOptions);
+
+// Only export GET/POST. `authOptions` is already exported above.
 export { handler as GET, handler as POST };
