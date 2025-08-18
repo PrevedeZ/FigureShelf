@@ -1,20 +1,33 @@
+// app/api/admin/series/route.ts
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "../../../../lib/auth";
+import { authOptions } from "../../auth/[...nextauth]/route";
 import { prisma } from "../../../../lib/prisma";
 
+function forbid() {
+  return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+}
+
 export async function GET() {
-  const list = await prisma.series.findMany({ orderBy: { name: "asc" } });
-  return NextResponse.json({ series: list });
+  const session = (await getServerSession(authOptions as any)) as any;
+  if (!session?.user || session.user.role !== "ADMIN") return forbid();
+
+  const series = await prisma.series.findMany({
+    orderBy: { name: "asc" },
+    include: { _count: { select: { figures: true } } },
+  });
+  return NextResponse.json({ series });
 }
 
 export async function POST(req: Request) {
-  const session = await getServerSession(authOptions);
-  if ((session?.user as any)?.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const session = (await getServerSession(authOptions as any)) as any;
+  if (!session?.user || session.user.role !== "ADMIN") return forbid();
 
-  const { name } = await req.json();
-  if (!name || typeof name !== "string") return NextResponse.json({ error: "Name required" }, { status: 400 });
+  const body = await req.json().catch(() => ({}));
+  const name = String(body?.name ?? "").trim();
+  const slug = body?.slug ? String(body.slug).trim() : undefined;
+  if (!name) return NextResponse.json({ error: "name required" }, { status: 400 });
 
-  const s = await prisma.series.create({ data: { name: name.trim() } });
-  return NextResponse.json({ series: s });
+  const created = await prisma.series.create({ data: { name, slug } });
+  return NextResponse.json({ series: created }, { status: 201 });
 }

@@ -4,65 +4,77 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "../../auth/[...nextauth]/route";
 import { prisma } from "../../../../lib/prisma";
 
-export const dynamic = "force-dynamic";
-
-export async function GET() {
-  const session = await getServerSession(authOptions);
-  if (!session || (session.user as any)?.role !== "ADMIN") {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
-
-  const series = await prisma.series.findMany({
-    orderBy: { name: "asc" },
-    select: { id: true, name: true },
-  });
-
-  const figures = await prisma.figure.findMany({
-    orderBy: { name: "asc" },
-    include: { series: { select: { id: true, name: true } } },
-  });
-
-  return NextResponse.json(
-    {
-      series,
-      figures: figures.map((f) => ({
-        id: f.id,
-        name: f.name,
-        seriesId: f.seriesId,
-        seriesName: f.series?.name ?? null,
-      })),
-    },
-    { headers: { "Cache-Control": "no-store" } }
-  );
+function forbid() {
+  return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 }
 
-export async function PATCH(req: Request) {
-  const session = await getServerSession(authOptions);
-  if (!session || (session.user as any)?.role !== "ADMIN") {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
+async function resolveSeriesId(seriesIdOrName?: string): Promise<string | null> {
+  if (!seriesIdOrName) return null;
+  const foundById = await prisma.series.findUnique({ where: { id: seriesIdOrName } });
+  if (foundById) return foundById.id;
+  const foundByName = await prisma.series.findFirst({ where: { name: seriesIdOrName } });
+  return foundByName?.id ?? null;
+}
 
-  const body = await req.json().catch(() => null);
-  const figureId = body?.figureId as string | undefined;
-  const seriesId = body?.seriesId as string | undefined;
+export async function GET(req: Request) {
+  const session = (await getServerSession(authOptions as any)) as any;
+  if (!session?.user || session.user.role !== "ADMIN") return forbid();
 
-  if (!figureId || !seriesId) {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 });
-  }
+  const { searchParams } = new URL(req.url);
+  const seriesId = searchParams.get("seriesId") || undefined;
 
-  // ensure both exist
-  const [figure, series] = await Promise.all([
-    prisma.figure.findUnique({ where: { id: figureId } }),
-    prisma.series.findUnique({ where: { id: seriesId } }),
-  ]);
-  if (!figure || !series) {
-    return NextResponse.json({ error: "not_found" }, { status: 404 });
-  }
-
-  await prisma.figure.update({
-    where: { id: figureId },
-    data: { seriesId },
+  const figures = await prisma.figure.findMany({
+    where: { ...(seriesId ? { seriesId } : {}) },
+    orderBy: [{ seriesId: "asc" }, { name: "asc" }],
   });
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ figures });
+}
+
+export async function POST(req: Request) {
+  const session = (await getServerSession(authOptions as any)) as any;
+  if (!session?.user || session.user.role !== "ADMIN") return forbid();
+
+  const b = await req.json().catch(() => ({}));
+  const seriesId = await resolveSeriesId(String(b.seriesId || "").trim());
+  if (!seriesId) return NextResponse.json({ error: "seriesId (or valid series name) required" }, { status: 400 });
+
+  const name = (b.name ?? "").toString().trim();
+  const image = (b.image ?? "").toString().trim();
+  const line = (b.line ?? "").toString().trim();
+  const character = (b.character ?? "").toString().trim();
+  const characterBase = b.characterBase ? String(b.characterBase).trim() : null;
+  const variant = b.variant ? String(b.variant).trim() : null;
+  const releaseYear = Number(b.releaseYear ?? 0) || new Date().getFullYear();
+  const releaseType = b.releaseType ? String(b.releaseType) : null;
+  const msrpCents = Number.isFinite(b.msrpCents) ? Number(b.msrpCents) : 0;
+  const msrpCurrency = (b.msrpCurrency ?? "EUR") as "EUR" | "USD" | "GBP" | "JPY";
+  const bodyVersionTag = b.bodyVersionTag ? String(b.bodyVersionTag).trim() : null;
+  const bodyVersion = b.bodyVersion ? (String(b.bodyVersion) as any) : undefined;
+  const saga = b.saga ? String(b.saga).trim() : null;
+
+  if (!name || !image || !line) {
+    return NextResponse.json({ error: "name, line, image required" }, { status: 400 });
+  }
+
+  const created = await prisma.figure.create({
+    data: {
+      name,
+      character,
+      characterBase,
+      variant,
+      line,
+      image,
+      releaseYear,
+      releaseType: releaseType as any,
+      msrpCents,
+      msrpCurrency: msrpCurrency as any,
+      seriesId,
+      bodyVersionTag,
+      bodyVersion,
+      saga,
+    },
+  });
+
+  return NextResponse.json({ figure: created }, { status: 201 });
 }

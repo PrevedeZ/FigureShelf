@@ -1,21 +1,33 @@
+// app/api/admin/users/[id]/route.ts
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "../../../../../lib/auth";
+import { authOptions } from "../../../auth/[...nextauth]/route";
 import { prisma } from "../../../../../lib/prisma";
+import bcrypt from "bcryptjs";
 
-export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
-  const session = await getServerSession(authOptions);
-  if ((session?.user as any)?.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+function forbid() {
+  return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+}
+
+export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const session = (await getServerSession(authOptions as any)) as any;
+  if (!session?.user || session.user.role !== "ADMIN") return forbid();
+
+  const { id } = await ctx.params;
+  const body = await req.json().catch(() => ({}));
+
+  const data: any = {};
+  if (body.role && (body.role === "USER" || body.role === "ADMIN")) data.role = body.role;
+  if (typeof body.password === "string" && body.password.length >= 8) {
+    data.password = await bcrypt.hash(body.password, 10);
   }
-  const meId = (session?.user as any)?.id;
-  if (params.id === meId) {
-    return NextResponse.json({ error: "You cannot delete your own account." }, { status: 400 });
-  }
-  try {
-    await prisma.user.delete({ where: { id: params.id } });
-    return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    return NextResponse.json({ error: "Delete failed", detail: String(e?.message ?? e) }, { status: 400 });
-  }
+  if (!Object.keys(data).length) return NextResponse.json({ error: "nothing to update" }, { status: 400 });
+
+  const updated = await prisma.user.update({
+    where: { id },
+    data,
+    select: { id: true, email: true, name: true, role: true },
+  });
+
+  return NextResponse.json({ user: updated });
 }

@@ -1,39 +1,39 @@
+// app/api/admin/series/[id]/route.ts
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "../../../../../lib/auth";
+import { authOptions } from "../../../auth/[...nextauth]/route";
 import { prisma } from "../../../../../lib/prisma";
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
-  const session = await getServerSession(authOptions);
-  if ((session?.user as any)?.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const { name } = await req.json().catch(() => ({}));
-  if (!name) return NextResponse.json({ error: "Name required" }, { status: 400 });
-  try {
-    const updated = await prisma.series.update({ where: { id: params.id }, data: { name } });
-    return NextResponse.json({ series: updated });
-  } catch (e: any) {
-    return NextResponse.json({ error: "Update failed", detail: String(e?.message ?? e) }, { status: 400 });
-  }
+function forbid() {
+  return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 }
 
-export async function DELETE(req: Request, { params }: { params: { id: string } }) {
-  const session = await getServerSession(authOptions);
-  if ((session?.user as any)?.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const session = (await getServerSession(authOptions as any)) as any;
+  if (!session?.user || session.user.role !== "ADMIN") return forbid();
+
+  const { id } = await ctx.params;
+  const body = await req.json().catch(() => ({}));
+  const name = body?.name ? String(body.name).trim() : undefined;
+  const slug = body?.slug ? String(body.slug).trim() : undefined;
+  if (!name && !slug) return NextResponse.json({ error: "nothing to update" }, { status: 400 });
+
+  const updated = await prisma.series.update({
+    where: { id },
+    data: { ...(name ? { name } : {}), ...(slug ? { slug } : {}) },
+  });
+  return NextResponse.json({ series: updated });
+}
+
+export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const session = (await getServerSession(authOptions as any)) as any;
+  if (!session?.user || session.user.role !== "ADMIN") return forbid();
+
+  const { id } = await ctx.params;
+  const figCount = await prisma.figure.count({ where: { seriesId: id } });
+  if (figCount > 0) {
+    return NextResponse.json({ error: "Series has figures – delete blocked." }, { status: 409 });
   }
-  const url = new URL(req.url);
-  const force = url.searchParams.get("force") === "true";
-  const count = await prisma.figure.count({ where: { seriesId: params.id } });
-  if (count > 0 && !force) {
-    return NextResponse.json({ error: "Series has figures. Pass ?force=true to delete all figures first." }, { status: 400 });
-  }
-  try {
-    if (force) await prisma.figure.deleteMany({ where: { seriesId: params.id } });
-    await prisma.series.delete({ where: { id: params.id } });
-    return NextResponse.json({ ok: true, deletedFigures: force ? count : 0 });
-  } catch (e: any) {
-    return NextResponse.json({ error: "Delete failed", detail: String(e?.message ?? e) }, { status: 400 });
-  }
+  await prisma.series.delete({ where: { id } });
+  return NextResponse.json({ ok: true });
 }
