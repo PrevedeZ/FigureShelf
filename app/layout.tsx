@@ -1,19 +1,23 @@
-// app/layout.tsx
+import type { Metadata } from "next";
 import "./globals.css";
-import type { ReactNode } from "react";
-import ClientApp from "../components/ClientApp";
+import ClientRoot from "../components/ClientRoot";
+import Header from "../components/Header";
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "FigureShelf",
-  description: "Track and manage your figure collection.",
+  description: "Collect, track, and enjoy your figures.",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body>
-        {/* Render Header (and providers) exactly once here */}
-        <ClientApp>{children}</ClientApp>
+        <ClientRoot>
+          <Header />
+          <main className="mx-auto max-w-7xl px-4 py-6">
+            {children}
+          </main>
+        </ClientRoot>
       </body>
     </html>
   );

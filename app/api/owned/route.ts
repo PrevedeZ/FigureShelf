@@ -1,74 +1,73 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
+import type { Session } from "next-auth";
 import { authOptions } from "../auth/[...nextauth]/route";
 import { prisma } from "../../../lib/prisma";
 
-type Currency = "EUR" | "USD" | "GBP" | "JPY";
+type AppSession = Session & { user?: { id?: string; role?: "USER" | "ADMIN" } };
 
-function toInt(v: unknown, d = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.trunc(n) : d;
+function forbid() {
+  return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 }
 
-function parseBody(raw: any) {
-  // accept several shapes, be very forgiving
-  const b = typeof raw === "object" && raw ? raw : {};
-  const figureId =
-    b.figureId ?? b.figure_id ?? b.id ?? b?.owned?.figureId ?? b?.owned?.figure_id;
+export async function GET() {
+  const session = (await getServerSession(authOptions as any)) as AppSession | null;
+  if (!session?.user?.id) return forbid();
 
-  const currency: Currency =
-    (b.currency ?? b?.owned?.currency ?? "EUR").toString().toUpperCase();
-
-  return {
-    figureId: typeof figureId === "string" ? figureId : "",
-    currency: (["EUR", "USD", "GBP", "JPY"] as const).includes(currency as any)
-      ? (currency as Currency)
-      : "EUR",
-    pricePaidCents: toInt(b.pricePaidCents ?? b.price ?? b?.owned?.pricePaidCents),
-    taxCents: toInt(b.taxCents ?? b.tax ?? b?.owned?.taxCents),
-    shippingCents: toInt(b.shippingCents ?? b.shipping ?? b?.owned?.shippingCents),
-    fxPerEUR:
-      b.fxPerEUR === null || b.fxPerEUR === undefined
-        ? null
-        : Number(b.fxPerEUR) || null,
-    note:
-      typeof b.note === "string"
-        ? b.note
-        : typeof b?.owned?.note === "string"
-        ? b.owned.note
-        : null,
-  };
+  const rows = await prisma.owned.findMany({
+    where: { userId: session.user.id },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      figureId: true,
+      pricePaidCents: true,
+      taxCents: true,
+      shippingCents: true,
+      currency: true,
+      fxPerEUR: true,
+      note: true,
+      createdAt: true,
+    },
+  });
+  return NextResponse.json(rows, { status: 200 });
 }
 
-export async function POST(req: Request) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export async function POST(req: NextRequest) {
+  const session = (await getServerSession(authOptions as any)) as AppSession | null;
+  if (!session?.user?.id) return forbid();
 
-  const raw = await req.json().catch(() => ({}));
-  const body = parseBody(raw);
+  const body = await req.json().catch(() => ({} as any));
+  const figureId: string | undefined =
+    body?.figureId ?? body?.id ?? body?.figure_id;
 
-  if (!body.figureId) {
+  if (!figureId || typeof figureId !== "string") {
     return NextResponse.json({ error: "figureId is required" }, { status: 400 });
   }
 
-  // ensure figure exists
-  const fig = await prisma.figure.findUnique({ where: { id: body.figureId } });
-  if (!fig) {
-    return NextResponse.json({ error: "Figure not found" }, { status: 404 });
-  }
+  const fig = await prisma.figure.findUnique({ where: { id: figureId } });
+  if (!fig) return NextResponse.json({ error: "Figure not found" }, { status: 404 });
 
   const created = await prisma.owned.create({
     data: {
-      userId: session.user.id as string,
-      figureId: body.figureId,
-      currency: body.currency as any,
-      pricePaidCents: body.pricePaidCents,
-      taxCents: body.taxCents,
-      shippingCents: body.shippingCents,
-      fxPerEUR: body.fxPerEUR,
-      note: body.note,
+      userId: session.user.id,
+      figureId,
+      currency: body?.currency ?? "EUR",
+      pricePaidCents: Number.isFinite(+body?.pricePaidCents) ? +body.pricePaidCents : 0,
+      taxCents: Number.isFinite(+body?.taxCents) ? +body.taxCents : 0,
+      shippingCents: Number.isFinite(+body?.shippingCents) ? +body.shippingCents : 0,
+      fxPerEUR: body?.fxPerEUR == null ? null : Number(body.fxPerEUR),
+      note: body?.note ?? null,
+    },
+    select: {
+      id: true,
+      figureId: true,
+      pricePaidCents: true,
+      taxCents: true,
+      shippingCents: true,
+      currency: true,
+      fxPerEUR: true,
+      note: true,
+      createdAt: true,
     },
   });
 

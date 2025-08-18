@@ -1,24 +1,36 @@
 // components/types.ts
 
-// Keep this union in sync with your CurrencyContext
 export type CCY = "EUR" | "USD" | "GBP" | "JPY";
 
-export type Figure = {
+export type ReleaseType =
+  | "retail"
+  | "tamashii_web"
+  | "event_exclusive"
+  | "sdcc"
+  | "web_exclusive"
+  | "reissue"
+  | "unknown";
+
+export interface Figure {
   id: string;
-  name: string;
-  character: string;          // legacy full name, may include "(Variant)"
-  characterBase?: string;     // preferred base
-  variant?: string;           // preferred variant
-  line: string;
+  // NOTE: in the FE catalog we use the resolved series name, not seriesId
   series: string;
+
+  name: string;
+  character: string;
+  characterBase?: string | null; // <- allow null to match catalog
+  variant?: string | null;       // <- allow null to match catalog
+
+  line: string;
   image: string;
 
   releaseYear: number;
-  // match your Prisma enum values
-  releaseType?: "retail" | "tamashii_web" | "event_exclusive" | "sdcc" | string;
-  bodyVersion?: string;       // e.g. "V1.0" | "V2.0" | "V3.0" | "Other"
-  saga?: string;
+  releaseType?: ReleaseType | null;
+
+  // optional/legacy fields present in FE data
+  bodyVersion?: string | null;
+  saga?: string | null;
 
   msrpCents: number;
-  msrpCurrency: CCY;          // <-- IMPORTANT: not plain string
-};
+  msrpCurrency: CCY;
+}

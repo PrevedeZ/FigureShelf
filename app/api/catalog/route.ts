@@ -1,33 +1,34 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma"; // path from app/api/catalog/route.ts
+import { prisma } from "../../../lib/prisma";
 
 export async function GET() {
-  try {
-    const rows = await prisma.figure.findMany({
-      include: { series: true },
-      orderBy: [{ series: { name: "asc" } }, { name: "asc" }],
-    });
+  const [figures, series] = await Promise.all([
+    prisma.figure.findMany({
+      orderBy: [{ releaseYear: "desc" }, { name: "asc" }],
+      select: {
+        id: true,
+        name: true,
+        character: true,
+        characterBase: true,
+        variant: true,
+        line: true,
+        image: true,
+        releaseYear: true,
+        releaseType: true,
+        bodyVersionTag: true,
+        bodyVersion: true,
+        saga: true,
+        msrpCents: true,
+        msrpCurrency: true,
+        seriesId: true,
+        series: { select: { id: true, name: true } },
+      },
+    }),
+    prisma.series.findMany({
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, slug: true },
+    }),
+  ]);
 
-    const figures = rows.map((r) => ({
-      id: r.id,
-      name: r.name,
-      character: r.character,
-      characterBase: r.characterBase ?? null,
-      variant: r.variant ?? null,
-      line: r.line,
-      image: r.image,
-      releaseYear: r.releaseYear,
-      releaseType: r.releaseType,
-      bodyVersion: r.bodyVersion ?? null,
-      saga: r.saga ?? null,
-      msrpCents: r.msrpCents,
-      msrpCurrency: r.msrpCurrency,
-      series: r.series.name, // <-- string expected by the client
-    }));
-
-    return NextResponse.json({ figures });
-  } catch (err) {
-    console.error("GET /api/catalog failed", err);
-    return NextResponse.json({ error: "Failed to load catalog" }, { status: 500 });
-  }
+  return NextResponse.json({ figures, series }, { status: 200 });
 }

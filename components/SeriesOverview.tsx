@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useCatalog } from "./catalog";
 import { useCollection } from "./CollectionStore";
 import { useCurrency, formatCents } from "./CurrencyContext";
-import type { CCY, Figure } from "./types";
+import type { CCY, Figure as TFigure } from "./types"; // <- use FE Figure type
 import PurchaseModal from "./PurchaseModal";
 import OwnedManagerModal from "./OwnedManagerModal";
 import WishModal from "./WishModal";
@@ -14,22 +14,6 @@ function asCCY(c: string): CCY {
   const allowed = ["EUR", "USD", "GBP", "JPY"] as const;
   return (allowed.includes(c as CCY) ? (c as CCY) : "EUR");
 }
-
-/* ---------- minimal row types for remote data ---------- */
-type OwnedRowLite = {
-  id: string;
-  figureId: string;
-  currency: CCY;
-  pricePaidCents: number;
-  taxCents?: number | null;
-  shippingCents?: number | null;
-  fxPerEUR?: number | null;
-};
-type WishRowLite = {
-  id: string;
-  figureId: string;
-  note?: string | null;
-};
 
 /* ---------- small UI atoms ---------- */
 function Section({ title, subtitle, children }:{ title:string; subtitle?:string; children:React.ReactNode }) {
@@ -90,21 +74,21 @@ function Drawer({ open, title, onClose, children }:{
   );
 }
 
-/* ---------- lists use data passed in (DB or store), not the hook ---------- */
+/* ---------- lists ---------- */
 function OwnedList({
-  series, onManage, onAddAnother, ownedRows,
+  series, onManage, onAddAnother,
 }: {
   series: string;
-  ownedRows: OwnedRowLite[];
-  onManage: (f: Figure)=>void;
-  onAddAnother: (f: Figure)=>void;
+  onManage: (f: TFigure)=>void;
+  onAddAnother: (f: TFigure)=>void;
 }) {
+  const { owned } = useCollection();
   const { byId } = useCatalog();
   const { toEurCents } = useCurrency();
 
   const rows = useMemo(() => {
     const agg = new Map<string, { qty: number; eurSpend: number }>();
-    for (const o of ownedRows) {
+    for (const o of owned) {
       const f = byId.get(o.figureId);
       if (!f || f.series !== series) continue;
       const line = (o.pricePaidCents ?? 0) + (o.taxCents ?? 0) + (o.shippingCents ?? 0);
@@ -114,9 +98,10 @@ function OwnedList({
       agg.set(f.id, rec);
     }
     return [...agg.entries()]
-      .map(([id, v]) => ({ figure: byId.get(id)!, qty: v.qty, spendEur: v.eurSpend }))
+      // Cast catalog figure to FE type to satisfy TS
+      .map(([id, v]) => ({ figure: byId.get(id)! as unknown as TFigure, qty: v.qty, spendEur: v.eurSpend }))
       .sort((a,b)=>a.figure.name.localeCompare(b.figure.name));
-  }, [ownedRows, byId, series, toEurCents]);
+  }, [owned, byId, series, toEurCents]);
 
   if (rows.length === 0) return <div className="card p-6 text-center text-gray-600">No owned figures yet.</div>;
 
@@ -140,27 +125,27 @@ function OwnedList({
 }
 
 function WishList({
-  series, onEditWish, onPurchase, wishRows,
+  series, onEditWish, onPurchase,
 }: {
   series: string;
-  wishRows: WishRowLite[];
-  onEditWish: (f: Figure)=>void;
-  onPurchase: (f: Figure)=>void;
+  onEditWish: (f: TFigure)=>void;
+  onPurchase: (f: TFigure)=>void;
 }) {
+  const { wishlist } = useCollection();
   const { byId } = useCatalog();
 
   const list = useMemo(() => {
     const ids = new Set<string>();
-    const out: Figure[] = [];
-    for (const w of wishRows) {
+    const out: TFigure[] = [];
+    for (const w of wishlist) {
       const f = byId.get(w.figureId);
       if (!f || f.series !== series) continue;
       if (ids.has(f.id)) continue;
       ids.add(f.id);
-      out.push(f);
+      out.push(f as unknown as TFigure);
     }
     return out.sort((a,b)=>a.name.localeCompare(b.name));
-  }, [wishRows, byId, series]);
+  }, [wishlist, byId, series]);
 
   if (list.length === 0) return <div className="card p-6 text-center text-gray-600">No wishlist entries for this series.</div>;
 
@@ -182,12 +167,12 @@ function WishList({
   );
 }
 
-/* ---------- main component ---------- */
+/* ---------- main ---------- */
 type Row = {
   series: string;
   catalog: number;
   unique: number;
-  copies: number;
+  copies: number;              // duplicates only
   wishlist: number;
   spendDisplayCents: number;
   pct: number;
@@ -196,56 +181,21 @@ type Row = {
 
 export default function SeriesOverview() {
   const { series, figures, byId } = useCatalog();
-  const { owned, wishlist } = useCollection(); // store (fallback)
+  const { owned, wishlist } = useCollection();
   const { toEurCents, fromEurCents, currency } = useCurrency();
   const displayCCY = asCCY(currency);
 
-  // Remote (DB) data
-  const [ownedRemote, setOwnedRemote] = useState<OwnedRowLite[] | null>(null);
-  const [wishRemote, setWishRemote] = useState<WishRowLite[] | null>(null);
-
-  const loadRemote = async () => {
-    try {
-      const [o, w] = await Promise.all([
-        fetch("/api/owned/list", { credentials: "include", cache: "no-store" }),
-        fetch("/api/wishlist/list", { credentials: "include", cache: "no-store" }),
-      ]);
-      const oj = o.ok ? await o.json() : { rows: [] };
-      const wj = w.ok ? await w.json() : { rows: [] };
-      setOwnedRemote(Array.isArray(oj.rows) ? oj.rows : []);
-      setWishRemote(Array.isArray(wj.rows) ? wj.rows : []);
-    } catch {
-      setOwnedRemote([]);
-      setWishRemote([]);
-    }
-  };
-
-  useEffect(() => { loadRemote(); }, []);
-  useEffect(() => {
-    const h = () => loadRemote();
-    document.addEventListener("owned:changed", h);
-    document.addEventListener("wish:changed", h);
-    return () => {
-      document.removeEventListener("owned:changed", h);
-      document.removeEventListener("wish:changed", h);
-    };
-  }, []);
-
-  // Choose source: prefer remote if loaded, else store
-  const ownedRows: OwnedRowLite[] = ownedRemote ?? (owned as any as OwnedRowLite[]);
-  const wishRows:  WishRowLite[]  = wishRemote ?? (wishlist as any as WishRowLite[]);
-
   const [drillSeries, setDrillSeries] = useState<string | null>(null);
   const [drillTab, setDrillTab] = useState<"owned" | "wishlist">("owned");
-  const [buyFigure, setBuyFigure] = useState<Figure | null>(null);
-  const [manageFigure, setManageFigure] = useState<Figure | null>(null);
-  const [wishFigure, setWishFigure] = useState<Figure | null>(null);
+  const [buyFigure, setBuyFigure] = useState<TFigure | null>(null);
+  const [manageFigure, setManageFigure] = useState<TFigure | null>(null);
+  const [wishFigure, setWishFigure] = useState<TFigure | null>(null);
   const [editOwnedId, setEditOwnedId] = useState<string | null>(null);
 
   const [q, setQ] = useState("");
   const [sortKey, setSortKey] = useState<"name" | "pct" | "spend" | "wish">("name");
 
-  // DB-truth for total copies (for Totals card)
+  // DB-truth for total copies (duplicates)
   const [dbOwnedCopies, setDbOwnedCopies] = useState<number | null>(null);
   useEffect(() => {
     let alive = true;
@@ -254,12 +204,10 @@ export default function SeriesOverview() {
         const r = await fetch("/api/owned/count", { cache: "no-store", credentials: "include" });
         const j = await r.json().catch(() => ({ count: null }));
         if (alive) setDbOwnedCopies(typeof j.count === "number" ? j.count : null);
-      } catch {
-        if (alive) setDbOwnedCopies(null);
-      }
+      } catch { if (alive) setDbOwnedCopies(null); }
     })();
     return () => { alive = false; };
-  }, [ownedRows.length]);
+  }, [owned.length]);
 
   const { rows, total } = useMemo(() => {
     const figsBySeries = new Map<string, { id: string; name: string }[]>();
@@ -270,44 +218,49 @@ export default function SeriesOverview() {
     }
 
     const ownedByFigureId = new Map<string, number>();
-    for (const o of ownedRows) ownedByFigureId.set(o.figureId, (ownedByFigureId.get(o.figureId) || 0) + 1);
+    for (const o of owned) ownedByFigureId.set(o.figureId, (ownedByFigureId.get(o.figureId) || 0) + 1);
 
-    const wishedFigureIds = new Set(wishRows.map(w => w.figureId));
-
-    const out: Row[] = [];
     let tSeries = series.length;
     let tCatalog = figures.length;
-    let tUnique = 0;
-    let tCopies = ownedRows.length; // fallback; Totals prefers dbOwnedCopies
-    let tSpendEur = 0;
 
-    for (const o of ownedRows) {
+    // duplicates only
+    const tCopies = [...ownedByFigureId.values()].reduce((sum, c) => sum + Math.max(c - 1, 0), 0);
+
+    let tSpendEur = 0;
+    for (const o of owned) {
       const line = (o.pricePaidCents ?? 0) + (o.taxCents ?? 0) + (o.shippingCents ?? 0);
       tSpendEur += toEurCents(line, o.currency, o.fxPerEUR ?? undefined);
     }
     const tSpendDisplay = fromEurCents(tSpendEur, displayCCY);
+
+    const wishedFigureIds = new Set(wishlist.map(w => w.figureId));
+
+    const out: Row[] = [];
+    let tUnique = 0;
 
     for (const sName of series) {
       const list = figsBySeries.get(sName) || [];
       const catalog = list.length;
 
       const ownedUniqueIds = new Set<string>();
-      const ownedCopiesInSeries: number[] = [];
+      let dupCopiesInSeries = 0;
+
       for (const f of list) {
-        const copies = ownedByFigureId.get(f.id) || 0;
-        if (copies > 0) ownedUniqueIds.add(f.id);
-        if (copies > 0) ownedCopiesInSeries.push(copies);
+        const cnt = ownedByFigureId.get(f.id) || 0;
+        if (cnt > 0) ownedUniqueIds.add(f.id);
+        if (cnt > 1) dupCopiesInSeries += (cnt - 1);
       }
 
       const unique = ownedUniqueIds.size;
-      const copies = ownedCopiesInSeries.reduce((a, b) => a + b, 0);
+      const copies = dupCopiesInSeries;
+
       const wishlistCount = [...wishedFigureIds].filter(id => {
         const fig = byId.get(id);
         return fig && fig.series === sName;
       }).length;
 
       let eurSpend = 0;
-      for (const o of ownedRows) {
+      for (const o of owned) {
         const f = byId.get(o.figureId);
         if (!f || f.series !== sName) continue;
         const line = (o.pricePaidCents ?? 0) + (o.taxCents ?? 0) + (o.shippingCents ?? 0);
@@ -340,7 +293,7 @@ export default function SeriesOverview() {
       rows: filtered,
       total: { series: tSeries, catalog: tCatalog, unique: tUnique, copies: tCopies, spendDisplayCents: tSpendDisplay },
     };
-  }, [series, figures, byId, ownedRows, wishRows, q, sortKey, toEurCents, fromEurCents, displayCCY]);
+  }, [series, figures, byId, owned, wishlist, q, sortKey, toEurCents, fromEurCents, displayCCY]);
 
   return (
     <>
@@ -447,7 +400,6 @@ export default function SeriesOverview() {
         {drillTab === "owned" && (
           <OwnedList
             series={drillSeries!}
-            ownedRows={ownedRows}
             onManage={(f)=>setManageFigure(f)}
             onAddAnother={(f)=>{ setBuyFigure(f); setEditOwnedId(null); }}
           />
@@ -455,7 +407,6 @@ export default function SeriesOverview() {
         {drillTab === "wishlist" && (
           <WishList
             series={drillSeries!}
-            wishRows={wishRows}
             onEditWish={(f)=>setWishFigure(f)}
             onPurchase={(f)=>{ setBuyFigure(f); setEditOwnedId(null); }}
           />

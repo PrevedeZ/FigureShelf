@@ -2,15 +2,9 @@
 
 import React from "react";
 import { SessionProvider } from "next-auth/react";
-
-// Providers
-import { CurrencyProvider } from "./CurrencyContext";
-import { CatalogProvider } from "./catalog";
-import { CollectionProvider } from "./CollectionStore";
-
-// Shell
-import Header from "./Header";
-import AdminDock from "./AdminDock";
+import CurrencyProvider from "./CurrencyContext";
+import CatalogProvider from "./catalog";
+import CollectionProvider from "./CollectionStore";
 
 export default function ClientRoot({ children }: { children: React.ReactNode }) {
   return (
@@ -18,12 +12,7 @@ export default function ClientRoot({ children }: { children: React.ReactNode }) 
       <CurrencyProvider>
         <CatalogProvider>
           <CollectionProvider>
-            {/* Top Bar once here */}
-            <Header />
-            {/* Page content */}
-            <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
-            {/* Global Admin Dock (mounted once, opened via event) */}
-            <AdminDock />
+            {children}
           </CollectionProvider>
         </CatalogProvider>
       </CurrencyProvider>
