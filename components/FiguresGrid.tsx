@@ -1,5 +1,4 @@
 "use client";
-
 import { useMemo, useState, useEffect } from "react";
 import type { Figure } from "./types";
 import Image from "next/image";
@@ -20,7 +19,7 @@ export default function FiguresGrid({
   onEditOwned,
   onOpenWish,
   onManageOwned,
-  onSeriesFilterChange, // NEW (optional)
+  onSeriesFilterChange, // NEW
 }: {
   figures: Figure[];
   onAdd: (f: Figure) => void;
@@ -36,12 +35,12 @@ export default function FiguresGrid({
 
   const { series: allSeries } = useCatalog();
 
-  // Series + character + variant filters
+  // series + character + variant filters
   const [seriesSel, setSeriesSel] = useState<string[]>([]);
   const [charSel, setCharSel] = useState<CharKey[]>([]);
   const [variantSel, setVariantSel] = useState<Record<CharKey, Set<string>>>({});
 
-  // Notify parent when series filter changes
+  // notify parent (KPI bar) when series selection changes
   useEffect(() => {
     onSeriesFilterChange?.(seriesSel);
   }, [seriesSel, onSeriesFilterChange]);
@@ -117,12 +116,7 @@ export default function FiguresGrid({
   }, [figures, seriesSel, charSel, variantSel, q, tab, owned, wishlist, sortKey, currency, convert]);
 
   const clearFilters = () => {
-    setSeriesSel([]);
-    setCharSel([]);
-    setVariantSel({});
-    setQ("");
-    setTab("all");
-    setSortKey("name");
+    setSeriesSel([]); setCharSel([]); setVariantSel({}); setQ(""); setTab("all"); setSortKey("name");
   };
 
   return (
@@ -151,7 +145,7 @@ export default function FiguresGrid({
                             key={key}
                             className={`badge ${selected ? "" : "opacity-60"}`}
                             onClick={() => {
-                              setCharSel((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+                              setCharSel((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
                               setVariantSel((prev) => (prev[key] ? prev : { ...prev, [key]: new Set() }));
                             }}
                           >
@@ -169,22 +163,14 @@ export default function FiguresGrid({
                       const selectedSet = variantSel[key] ?? new Set<string>();
                       const allSelected = selectedSet.size === 0;
                       const hasBase = variants.includes(NO_VARIANT);
-                      const shown = variants
-                        .filter((v) => v !== NO_VARIANT)
-                        .map((v) => ({ value: v, label: v }));
+                      const shown = variants.filter((v) => v !== NO_VARIANT).map((v) => ({ value: v, label: v }));
 
                       return (
                         <div key={key} className="mt-2 border border-[var(--border)] rounded-lg p-2">
-                          <div className="text-xs text-gray-600 mb-1">
-                            Variants for <strong>{base}</strong>
-                          </div>
+                          <div className="text-xs text-gray-600 mb-1">Variants for <strong>{base}</strong></div>
                           <div className="flex flex-wrap items-center gap-2">
-                            <button
-                              className={`badge ${allSelected ? "" : "opacity-60"}`}
-                              onClick={() => {
-                                setVariantSel((prev) => ({ ...prev, [key]: new Set() }));
-                              }}
-                            >
+                            <button className={`badge ${allSelected ? "" : "opacity-60"}`}
+                                    onClick={() => setVariantSel((prev) => ({ ...prev, [key]: new Set() }))}>
                               All
                             </button>
                             {hasBase && (
@@ -196,8 +182,7 @@ export default function FiguresGrid({
                                   setVariantSel((prev) => {
                                     const next = new Set(prev[key] ?? []);
                                     if (allSelected) next.add(NO_VARIANT);
-                                    else if (next.has(NO_VARIANT)) next.delete(NO_VARIANT);
-                                    else next.add(NO_VARIANT);
+                                    else if (next.has(NO_VARIANT)) next.delete(NO_VARIANT); else next.add(NO_VARIANT);
                                     return { ...prev, [key]: next };
                                   });
                                 }}
@@ -213,8 +198,7 @@ export default function FiguresGrid({
                                   setVariantSel((prev) => {
                                     const next = new Set(prev[key] ?? []);
                                     if (allSelected) next.add(value);
-                                    else if (next.has(value)) next.delete(value);
-                                    else next.add(value);
+                                    else if (next.has(value)) next.delete(value); else next.add(value);
                                     return { ...prev, [key]: next };
                                   });
                                 }}
@@ -232,9 +216,7 @@ export default function FiguresGrid({
         </div>
 
         <div className="mt-4 flex gap-2">
-          <button className="btn btn-ghost" onClick={clearFilters}>
-            Reset
-          </button>
+          <button className="btn btn-ghost" onClick={clearFilters}>Reset</button>
         </div>
       </aside>
 
@@ -243,22 +225,15 @@ export default function FiguresGrid({
         {/* Toolbar */}
         <div className="card p-3 flex flex-wrap items-center gap-2">
           <div className="flex rounded-lg border border-[var(--border)] overflow-hidden w-full sm:w-96">
-            <input
-              className="field rounded-none border-0 flex-1"
-              placeholder="Search figures…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
+            <input className="field rounded-none border-0 flex-1" placeholder="Search figures…" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <div className="rounded-lg border border-[var(--border)] p-1">
               {(["all", "owned", "wishlist"] as const).map((t) => (
-                <button
-                  key={t}
-                  className={`px-3 py-2 rounded-md text-sm ${tab === t ? "bg-gray-100" : "hover:bg-gray-50"}`}
-                  onClick={() => setTab(t)}
-                >
+                <button key={t}
+                        className={`px-3 py-2 rounded-md text-sm ${tab === t ? "bg-gray-100" : "hover:bg-gray-50"}`}
+                        onClick={() => setTab(t)}>
                   {t[0].toUpperCase() + t.slice(1)}
                 </button>
               ))}
@@ -272,18 +247,12 @@ export default function FiguresGrid({
             </select>
 
             <div className="rounded-lg border border-[var(--border)] p-1">
-              <button className={`px-3 py-2 rounded-md text-sm ${view === "grid" ? "bg-gray-100" : ""}`} onClick={() => setView("grid")}>
-                Grid
-              </button>
-              <button className={`px-3 py-2 rounded-md text-sm ${view === "list" ? "bg-gray-100" : ""}`} onClick={() => setView("list")}>
-                List
-              </button>
+              <button className={`px-3 py-2 rounded-md text-sm ${view === "grid" ? "bg-gray-100" : ""}`} onClick={() => setView("grid")}>Grid</button>
+              <button className={`px-3 py-2 rounded-md text-sm ${view === "list" ? "bg-gray-100" : ""}`} onClick={() => setView("list")}>List</button>
             </div>
 
             {(q || seriesSel.length || charSel.length || Object.keys(variantSel).length || tab !== "all" || sortKey !== "name") && (
-              <button className="btn btn-ghost" onClick={clearFilters}>
-                Reset
-              </button>
+              <button className="btn btn-ghost" onClick={clearFilters}>Reset</button>
             )}
           </div>
         </div>
@@ -292,9 +261,7 @@ export default function FiguresGrid({
         {view === "grid" ? (
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
             {filtered.map((f) => (
-              <FigureCard
-                key={f.id}
-                fig={f}
+              <FigureCard key={f.id} fig={f}
                 onAdd={onAdd}
                 onEditOwned={onEditOwned}
                 onWishlist={() => onOpenWish(f)}
@@ -317,38 +284,24 @@ export default function FiguresGrid({
 }
 
 /* ---------- small UI helpers ---------- */
-function MultiSelect({ options, value, onChange }: { options: string[]; value: string[]; onChange: (v: string[]) => void }) {
+function MultiSelect({ options, value, onChange }:{ options: string[]; value: string[]; onChange:(v:string[])=>void; }) {
   const toggle = (s: string) => onChange(value.includes(s) ? value.filter((x) => x !== s) : [...value, s]);
   return (
     <div className="flex flex-wrap gap-2">
       {options.map((s) => (
-        <button key={s} className={`badge ${value.includes(s) ? "" : "opacity-60"}`} onClick={() => toggle(s)}>
-          {s}
-        </button>
+        <button key={s} className={`badge ${value.includes(s) ? "" : "opacity-60"}`} onClick={() => toggle(s)}>{s}</button>
       ))}
     </div>
   );
 }
-
-function CheckboxChip({
-  label,
-  checked,
-  dimWhenUnchecked,
-  onToggle,
-}: {
-  label: string;
-  checked: boolean;
-  dimWhenUnchecked?: boolean;
-  onToggle: () => void;
-}) {
+function CheckboxChip({ label, checked, dimWhenUnchecked, onToggle }:{ label:string; checked:boolean; dimWhenUnchecked?:boolean; onToggle:()=>void; }) {
   return (
-    <button className={`badge ${checked ? "" : dimWhenUnchecked ? "opacity-40" : "opacity-60"}`} onClick={onToggle} aria-pressed={checked}>
+    <button className={`badge ${checked ? "" : (dimWhenUnchecked ? "opacity-40" : "opacity-60")}`} onClick={onToggle} aria-pressed={checked}>
       {label}
     </button>
   );
 }
-
-function ListRow({ fig, onAdd, onOpenWish, onManage }: { fig: Figure; onAdd: (f: Figure) => void; onOpenWish: () => void; onManage: () => void }) {
+function ListRow({ fig, onAdd, onOpenWish, onManage }:{ fig:Figure; onAdd:(f:Figure)=>void; onOpenWish:()=>void; onManage:()=>void; }) {
   const { convert, currency } = useCurrency();
   const { isWished, wishFor, ownedCountForFigure, removeWish } = useCollection();
   const msrp = convert(fig.msrpCents, fig.msrpCurrency, currency);
@@ -369,30 +322,14 @@ function ListRow({ fig, onAdd, onOpenWish, onManage }: { fig: Figure; onAdd: (f:
           {ownedCount && wished && !wish?.wantAnother && <div className="badge">Wish (Owned)</div>}
         </div>
         <div className="font-medium truncate">{fig.name}</div>
-        <div className="text-sm text-gray-600 truncate">
-          {(fig.characterBase ?? fig.character)}
-          {fig.variant ? ` (${fig.variant})` : ""} · {fig.releaseYear}
-        </div>
+        <div className="text-sm text-gray-600 truncate">{(fig.characterBase ?? fig.character)}{fig.variant ? ` (${fig.variant})` : ""} · {fig.releaseYear}</div>
       </div>
       <div className="text-sm text-gray-800">{formatCents(msrp, currency)}</div>
       <div className="flex gap-2">
-        <button className="btn btn-primary" onClick={() => onAdd(fig)}>
-          {ownedCount ? "Add another" : "Add"}
-        </button>
-        {wished ? (
-          <button className="btn btn-ghost" onClick={() => removeWish(fig.id)}>
-            Remove wish
-          </button>
-        ) : (
-          <button className="btn btn-ghost" onClick={onOpenWish}>
-            Wishlist
-          </button>
-        )}
-        {ownedCount > 0 && (
-          <button className="btn btn-ghost" onClick={onManage}>
-            Manage
-          </button>
-        )}
+        <button className="btn btn-primary" onClick={() => onAdd(fig)}>{ownedCount ? "Add another" : "Add"}</button>
+        {wished ? <button className="btn btn-ghost" onClick={() => removeWish(fig.id)}>Remove wish</button>
+                : <button className="btn btn-ghost" onClick={onOpenWish}>Wishlist</button>}
+        {ownedCount > 0 && <button className="btn btn-ghost" onClick={onManage}>Manage</button>}
       </div>
     </div>
   );

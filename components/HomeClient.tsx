@@ -31,30 +31,40 @@ function KpiBar({ selectedSeries }: { selectedSeries: string[] }) {
   const { toEurCents, fromEurCents, currency } = useCurrency();
   const display = asCCY(currency);
 
-  // DB truth for global counts (no series filters)
   const [dbCounts, setDbCounts] = useState<{ copies: number; unique: number }>({ copies: 0, unique: 0 });
 
-  useEffect(() => {
-    if (selectedSeries.length > 0) return; // show client sums when filtered
-    (async () => {
+  const fetchSummary = async () => {
+    if (selectedSeries.length > 0) return; // DB summary is only for "global" view
+    const urls = ["/api/owned/summary", "/api/owned-summary"]; // support both routes
+    for (const url of urls) {
       try {
-        const urls = ["/api/owned/summary", "/api/owned-summary"]; // support both routes
-        for (const url of urls) {
-          const r = await fetch(url, { cache: "no-store", credentials: "include" });
-          if (!r.ok) continue;
-          const j = await r.json();
-          if (typeof j?.copies === "number" && typeof j?.unique === "number") {
-            setDbCounts({ copies: j.copies, unique: j.unique });
-            return;
-          }
+        const r = await fetch(url, { cache: "no-store", credentials: "include" });
+        if (!r.ok) continue;
+        const j = await r.json();
+        if (typeof j?.copies === "number" && typeof j?.unique === "number") {
+          setDbCounts({ copies: j.copies, unique: j.unique });
+          return;
         }
-      } catch {
-        /* ignore; fallback to client sums */
-      }
-      setDbCounts({ copies: 0, unique: 0 });
-    })();
-  }, [selectedSeries.length]);
+      } catch {}
+    }
+    setDbCounts({ copies: 0, unique: 0 });
+  };
 
+  // initial + refetch when switching between “global” and “filtered” modes
+  useEffect(() => { fetchSummary(); }, [selectedSeries.length]);
+
+  // live updates: re-fetch DB summary whenever collection changes (only if in global mode)
+  useEffect(() => {
+    const h = () => fetchSummary();
+    document.addEventListener("owned:changed", h);
+    document.addEventListener("wishlist:changed", h);
+    return () => {
+      document.removeEventListener("owned:changed", h);
+      document.removeEventListener("wishlist:changed", h);
+    };
+  }, []);
+
+  // Client-side aggregation (used when you filter by series)
   const { copies, unique, spendDisplayCents } = useMemo(() => {
     const filter = selectedSeries.length ? new Set(selectedSeries) : null;
 
@@ -108,7 +118,7 @@ export default function HomeClient() {
     <div className="space-y-6">
       <h1 className="text-xl font-semibold">All Figures</h1>
 
-      {/* KPIs that follow the grid’s series filter */}
+      {/* KPIs that follow the grid’s series filter (and DB totals when unfiltered) */}
       <KpiBar selectedSeries={selectedSeries} />
 
       {loading ? (
@@ -116,17 +126,11 @@ export default function HomeClient() {
       ) : (
         <FiguresGrid
           figures={figures ?? []}
-          onAdd={(f) => {
-            setActiveFigure(f);
-            setEditOwnedId(null);
-          }}
-          onEditOwned={(ownedId, f) => {
-            setActiveFigure(f);
-            setEditOwnedId(ownedId);
-          }}
+          onAdd={(f) => { setActiveFigure(f); setEditOwnedId(null); }}
+          onEditOwned={(ownedId, f) => { setActiveFigure(f); setEditOwnedId(ownedId); }}
           onOpenWish={(f) => setWishFigure(f)}
           onManageOwned={(f) => setManageFigure(f)}
-          /* NEW: tell KPI bar which series are selected */
+          /* tell KPI bar which series are selected */
           onSeriesFilterChange={setSelectedSeries}
         />
       )}
@@ -134,20 +138,15 @@ export default function HomeClient() {
       {/* Modals */}
       <PurchaseModal
         open={!!activeFigure}
-        onClose={() => {
-          setActiveFigure(null);
-          setEditOwnedId(null);
-        }}
+        onClose={() => { setActiveFigure(null); setEditOwnedId(null); }}
         figure={activeFigure}
         ownedId={editOwnedId}
       />
-
       <WishModal
         open={!!wishFigure}
         onClose={() => setWishFigure(null)}
         figure={wishFigure}
       />
-
       <OwnedManagerModal
         open={!!manageFigure}
         onClose={() => setManageFigure(null)}
