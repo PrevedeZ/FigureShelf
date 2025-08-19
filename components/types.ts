@@ -1,25 +1,25 @@
 // components/types.ts
 
+// --- shared primitives ---
 export type CCY = "EUR" | "USD" | "GBP" | "JPY";
 
 export type ReleaseType =
   | "retail"
-  | "tamashii_web"
+  | "web_exclusive"
   | "event_exclusive"
   | "sdcc"
-  | "web_exclusive"
   | "reissue"
   | "unknown";
 
-export interface Figure {
-  id: string;
-  // NOTE: in the FE catalog we use the resolved series name, not seriesId
-  series: string;
+export type BodyVersion = "V1_0" | "V2_0" | "V3_0" | "OTHER";
 
+// --- core app model used by UI ---
+export type Figure = {
+  id: string;
   name: string;
   character: string;
-  characterBase?: string | null; // <- allow null to match catalog
-  variant?: string | null;       // <- allow null to match catalog
+  characterBase?: string;
+  variant?: string;
 
   line: string;
   image: string;
@@ -27,10 +27,16 @@ export interface Figure {
   releaseYear: number;
   releaseType?: ReleaseType | null;
 
-  // optional/legacy fields present in FE data
-  bodyVersion?: string | null;
-  saga?: string | null;
+  // new (match adapter & prisma)
+  bodyVersionTag?: string;      // free-form like "2.0", "3.0"
+  bodyVersion?: BodyVersion;    // coarse enum, optional
+
+  saga?: string;
 
   msrpCents: number;
   msrpCurrency: CCY;
-}
+
+  // series as a simple label + optional id
+  series: string;
+  seriesId?: string;
+};

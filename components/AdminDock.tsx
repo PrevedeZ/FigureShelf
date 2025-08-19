@@ -1,276 +1,160 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useCatalog } from "./catalog";
+import { toAppFigure } from "./figureAdapter";
+import type { Figure } from "./types";
 
-type Series = { id: string; name: string; slug?: string };
-type Figure = {
-  id: string;
-  name: string;
-  character: string;
-  variant?: string | null;
-  image: string;
-  releaseYear: number;
-  releaseType: string | null;
-  msrpCents: number;
-  msrpCurrency: "EUR" | "USD" | "GBP" | "JPY";
-  series?: { id: string; name: string };
-};
-
-function money(cents: number, ccy: string) {
-  return `${(cents / 100).toFixed(2)} ${ccy}`;
-}
-
-async function safeJson<T = any>(r: Response): Promise<T | null> {
-  if (!(r.headers.get("content-type") || "").includes("application/json")) return null;
+async function safeJSON(r: Response) {
   try {
-    return (await r.json()) as T;
+    return await r.json();
   } catch {
     return null;
   }
 }
 
-export default function AdminDockClient() {
-  const [loading, setLoading] = useState(true);
-  const [series, setSeries] = useState<Series[]>([]);
-  const [figures, setFigures] = useState<Figure[]>([]);
-  const [error, setError] = useState<string | null>(null);
+export default function AdminDock() {
+  // Your catalog context returns { figures?, series? } where series is string[]
+  const catalog = useCatalog() as any; // (we access optional helpers dynamically)
+  const seriesNames: string[] = (catalog.series ?? []) as string[];
+  const rawFigures = catalog.figures ?? [];
 
-  // create form state
-  const [newSeriesName, setNewSeriesName] = useState("");
-  const [form, setForm] = useState({
-    seriesId: "",
-    name: "",
-    character: "",
-    line: "",
-    image: "",
-    releaseYear: new Date().getFullYear(),
-    msrpCents: 0,
-    msrpCurrency: "EUR" as Figure["msrpCurrency"],
-  });
+  // Convert raw catalog figures -> app Figure
+  const figures: Figure[] = useMemo(
+    () => rawFigures.map((f: any) => toAppFigure(f)),
+    [rawFigures]
+  );
 
-  const canCreateFigure = useMemo(() => {
-    return (
-      form.seriesId &&
-      form.name.trim() &&
-      form.character.trim() &&
-      form.line.trim() &&
-      form.image.trim() &&
-      Number.isFinite(form.releaseYear) &&
-      Number.isFinite(form.msrpCents)
-    );
-  }, [form]);
-
-  async function load() {
-    setLoading(true);
-    setError(null);
-    try {
-      const [sRes, fRes] = await Promise.all([
-        fetch("/api/admin/series", { cache: "no-store", credentials: "include" }),
-        fetch("/api/admin/figures", { cache: "no-store", credentials: "include" }),
-      ]);
-
-      const sJson = await safeJson<{ items?: Series[]; error?: string }>(sRes);
-      const fJson = await safeJson<{ items?: Figure[]; error?: string }>(fRes);
-
-      if (!sRes.ok) throw new Error(sJson?.error ?? `Series HTTP ${sRes.status}`);
-      if (!fRes.ok) throw new Error(fJson?.error ?? `Figures HTTP ${fRes.status}`);
-
-      setSeries(Array.isArray(sJson?.items) ? sJson!.items : []);
-      setFigures(Array.isArray(fJson?.items) ? fJson!.items : []);
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to load admin data");
-      setSeries([]);
-      setFigures([]);
-    } finally {
-      setLoading(false);
+  // Index figures by series name
+  const bySeries = useMemo(() => {
+    const m = new Map<string, Figure[]>();
+    for (const f of figures) {
+      const key = f.series || "Unassigned";
+      if (!m.has(key)) m.set(key, []);
+      m.get(key)!.push(f);
     }
-  }
+    for (const [, arr] of m) arr.sort((a, b) => a.name.localeCompare(b.name));
+    return m;
+  }, [figures]);
 
-  useEffect(() => {
-    load();
-    const onCat = () => load();
-    document.addEventListener("catalog:changed", onCat as any);
-    return () => document.removeEventListener("catalog:changed", onCat as any);
-  }, []);
+  // ----- Create series -----
+  const [newSeries, setNewSeries] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const refreshCatalog =
+    (catalog?.refreshCatalog as undefined | (() => Promise<void>)) ??
+    (catalog?.refresh as undefined | (() => Promise<void>)) ??
+    (async () => {});
 
   async function createSeries() {
-    if (!newSeriesName.trim()) return;
-    const r = await fetch("/api/admin/series", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newSeriesName.trim() }),
-    });
-    const j = await safeJson<{ series?: Series; error?: string }>(r);
-    if (!r.ok) {
-      alert(j?.error ?? `Create series failed (${r.status})`);
-      return;
+    const name = newSeries.trim();
+    if (!name) return;
+    setBusy(true);
+    try {
+      const r = await fetch("/api/admin/series", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (!r.ok) {
+        const j = await safeJSON(r);
+        alert(j?.error ?? "Could not create series.");
+      } else {
+        setNewSeries("");
+        await refreshCatalog();
+      }
+    } finally {
+      setBusy(false);
     }
-    setNewSeriesName("");
-    document.dispatchEvent(new CustomEvent("catalog:changed"));
   }
 
-  async function createFigure() {
-    if (!canCreateFigure) return;
-    const r = await fetch("/api/admin/figures", {
-      method: "POST",
+  // Optional delete by **name** (only if you have such an endpoint)
+  async function deleteSeriesByName(name: string) {
+    if (!confirm(`Delete series "${name}"? Figures keep existing but lose assignment.`)) return;
+    const r = await fetch(`/api/admin/series/by-name?name=${encodeURIComponent(name)}`, {
+      method: "DELETE",
       credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
     });
-    const j = await safeJson<{ figure?: Figure; error?: string }>(r);
     if (!r.ok) {
-      alert(j?.error ?? `Create figure failed (${r.status})`);
+      const j = await safeJSON(r);
+      alert(j?.error ?? "Could not delete series (endpoint by-name may not exist).");
       return;
     }
-    // reset minimal fields
-    setForm((f) => ({ ...f, name: "", character: "", image: "", msrpCents: 0 }));
-    document.dispatchEvent(new CustomEvent("catalog:changed"));
+    await refreshCatalog();
   }
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-center gap-2">
-        <h1 className="text-xl font-semibold">Admin Dock</h1>
-        <button className="btn btn-ghost" onClick={load} disabled={loading}>
-          {loading ? "Refreshing…" : "Refresh"}
+    <div className="space-y-6">
+      <h1 className="text-xl font-semibold">Admin Dock</h1>
+
+      {/* Create series */}
+      <div className="card p-4 flex items-end gap-2">
+        <div className="flex-1">
+          <label className="text-sm text-gray-600">Create new series</label>
+          <input
+            className="field w-full"
+            placeholder="Series name (e.g., Dragonball)"
+            value={newSeries}
+            onChange={(e) => setNewSeries(e.target.value)}
+          />
+        </div>
+        <button className="btn btn-primary" disabled={busy || !newSeries.trim()} onClick={createSeries}>
+          {busy ? "Creating…" : "Create"}
         </button>
-        {error && <span className="text-sm text-red-600">{error}</span>}
       </div>
 
-      {/* Create Series */}
-      <section className="card p-4 space-y-3">
-        <div className="font-medium">Create Series</div>
-        <div className="flex gap-2">
-          <input
-            className="field flex-1"
-            placeholder="Series name"
-            value={newSeriesName}
-            onChange={(e) => setNewSeriesName(e.target.value)}
-          />
-          <button className="btn btn-primary" onClick={createSeries} disabled={!newSeriesName.trim()}>
-            Add Series
-          </button>
-        </div>
-        <div className="text-sm text-gray-600">Existing: {series.map((s) => s.name).join(", ") || "—"}</div>
-      </section>
-
-      {/* Create Figure */}
-      <section className="card p-4 space-y-3">
-        <div className="font-medium">Create Figure</div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <select
-            className="field"
-            value={form.seriesId}
-            onChange={(e) => setForm((f) => ({ ...f, seriesId: e.target.value }))}
-          >
-            <option value="">Select series…</option>
-            {series.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-
-          <input
-            className="field"
-            placeholder="Figure name"
-            value={form.name}
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-          />
-
-          <input
-            className="field"
-            placeholder="Character"
-            value={form.character}
-            onChange={(e) => setForm((f) => ({ ...f, character: e.target.value }))}
-          />
-
-          <input
-            className="field"
-            placeholder="Line (e.g., S.H.Figuarts)"
-            value={form.line}
-            onChange={(e) => setForm((f) => ({ ...f, line: e.target.value }))}
-          />
-
-          <input
-            className="field"
-            placeholder="Image URL"
-            value={form.image}
-            onChange={(e) => setForm((f) => ({ ...f, image: e.target.value }))}
-          />
-
-          <input
-            className="field"
-            type="number"
-            placeholder="Release year"
-            value={form.releaseYear}
-            onChange={(e) => setForm((f) => ({ ...f, releaseYear: Number(e.target.value || 0) }))}
-          />
-
-          <input
-            className="field"
-            type="number"
-            placeholder="MSRP (cents)"
-            value={form.msrpCents}
-            onChange={(e) => setForm((f) => ({ ...f, msrpCents: Number(e.target.value || 0) }))}
-          />
-
-          <select
-            className="field"
-            value={form.msrpCurrency}
-            onChange={(e) => setForm((f) => ({ ...f, msrpCurrency: e.target.value as any }))}
-          >
-            <option>EUR</option>
-            <option>USD</option>
-            <option>GBP</option>
-            <option>JPY</option>
-          </select>
-        </div>
-
-        <div className="flex justify-end">
-          <button className="btn btn-primary" onClick={createFigure} disabled={!canCreateFigure}>
-            Add Figure
-          </button>
-        </div>
-      </section>
-
-      {/* Figures table */}
-      <section className="card p-4">
-        <div className="mb-2 font-medium">Figures ({figures.length})</div>
-        {figures.length === 0 ? (
-          <div className="text-sm text-gray-600">{loading ? "Loading…" : "No figures yet."}</div>
+      {/* Collapsible — figures by series */}
+      <div className="space-y-3">
+        {seriesNames.length === 0 ? (
+          <div className="card p-4 text-gray-600">No series yet.</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-gray-600">
-                  <th className="py-2 pr-2">Name</th>
-                  <th className="py-2 pr-2">Character</th>
-                  <th className="py-2 pr-2">Series</th>
-                  <th className="py-2 pr-2">Year</th>
-                  <th className="py-2 pr-2">MSRP</th>
-                </tr>
-              </thead>
-              <tbody>
-                {figures.map((f) => (
-                  <tr key={f.id} className="border-t border-[var(--border)]">
-                    <td className="py-2 pr-2">{f.name}</td>
-                    <td className="py-2 pr-2">
-                      {f.character}
-                      {f.variant ? ` (${f.variant})` : ""}
-                    </td>
-                    <td className="py-2 pr-2">{f.series?.name ?? "—"}</td>
-                    <td className="py-2 pr-2">{f.releaseYear}</td>
-                    <td className="py-2 pr-2">{money(f.msrpCents, f.msrpCurrency)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          seriesNames
+            .slice()
+            .sort((a, b) => a.localeCompare(b))
+            .map((name) => {
+              const list = bySeries.get(name) ?? [];
+              return (
+                <details key={name} open className="card">
+                  <summary className="p-3 cursor-pointer flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="font-semibold">{name}</div>
+                      <span className="badge">{list.length}</span>
+                    </div>
+                    <button
+                      className="btn btn-ghost"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        deleteSeriesByName(name);
+                      }}
+                    >
+                      Delete series
+                    </button>
+                  </summary>
+
+                  <div className="p-3 border-t border-[var(--border)]">
+                    {list.length === 0 ? (
+                      <div className="text-gray-600">No figures in this series yet.</div>
+                    ) : (
+                      <ul className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+                        {list.map((f) => (
+                          <li key={f.id} className="card p-3">
+                            <div className="text-sm text-gray-600">{f.releaseYear}</div>
+                            <div className="font-medium truncate">{f.name}</div>
+                            <div className="text-xs truncate">
+                              {(f.characterBase ?? f.character)}
+                              {f.variant ? ` (${f.variant})` : ""}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </details>
+              );
+            })
         )}
-      </section>
+      </div>
     </div>
   );
 }

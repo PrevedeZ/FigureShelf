@@ -1,6 +1,7 @@
+// components/HomeClient.tsx
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import FiguresGrid from "./FiguresGrid";
 import PurchaseModal from "./PurchaseModal";
 import WishModal from "./WishModal";
@@ -9,6 +10,7 @@ import { useCatalog } from "./catalog";
 import { useCollection } from "./CollectionStore";
 import { useCurrency, formatCents } from "./CurrencyContext";
 import type { CCY, Figure } from "./types";
+import { toAppFigures } from "./figureAdapter";
 
 /* ---------- helpers ---------- */
 function asCCY(c: string): CCY {
@@ -24,7 +26,7 @@ function Card({ label, value }: { label: string; value: string }) {
   );
 }
 
-/* ---------- KPI bar (DB totals when no series are filtered) ---------- */
+/* ---------- KPI bar (DB when unfiltered; client when filtered) ---------- */
 function KpiBar({ selectedSeries }: { selectedSeries: string[] }) {
   const { owned } = useCollection();
   const { byId } = useCatalog();
@@ -33,11 +35,10 @@ function KpiBar({ selectedSeries }: { selectedSeries: string[] }) {
 
   const [dbCounts, setDbCounts] = useState<{ copies: number; unique: number }>({ copies: 0, unique: 0 });
 
-  const fetchSummary = async () => {
-    if (selectedSeries.length > 0) return; // DB summary is only for "global" view
-    const urls = ["/api/owned/summary", "/api/owned-summary"]; // support both routes
-    for (const url of urls) {
-      try {
+  const fetchDbSummary = useCallback(async () => {
+    try {
+      const urls = ["/api/owned/summary", "/api/owned-summary"];
+      for (const url of urls) {
         const r = await fetch(url, { cache: "no-store", credentials: "include" });
         if (!r.ok) continue;
         const j = await r.json();
@@ -45,27 +46,28 @@ function KpiBar({ selectedSeries }: { selectedSeries: string[] }) {
           setDbCounts({ copies: j.copies, unique: j.unique });
           return;
         }
-      } catch {}
+      }
+    } catch {
+      // ignore; we'll fall back to client calc if needed
     }
-    setDbCounts({ copies: 0, unique: 0 });
-  };
-
-  // initial + refetch when switching between “global” and “filtered” modes
-  useEffect(() => { fetchSummary(); }, [selectedSeries.length]);
-
-  // live updates: re-fetch DB summary whenever collection changes (only if in global mode)
-  useEffect(() => {
-    const h = () => fetchSummary();
-    document.addEventListener("owned:changed", h);
-    document.addEventListener("wishlist:changed", h);
-    return () => {
-      document.removeEventListener("owned:changed", h);
-      document.removeEventListener("wishlist:changed", h);
-    };
   }, []);
 
-  // Client-side aggregation (used when you filter by series)
-  const { copies, unique, spendDisplayCents } = useMemo(() => {
+  // Initial fetch ONLY when no filters
+  useEffect(() => {
+    if (selectedSeries.length === 0) fetchDbSummary();
+  }, [selectedSeries.length, fetchDbSummary]);
+
+  // Realtime: when collection changes, re-fetch server totals if unfiltered
+  useEffect(() => {
+    const onOwnedChanged = () => {
+      if (selectedSeries.length === 0) fetchDbSummary();
+    };
+    document.addEventListener("owned:changed", onOwnedChanged);
+    return () => document.removeEventListener("owned:changed", onOwnedChanged);
+  }, [selectedSeries.length, fetchDbSummary]);
+
+  // Always compute client-side numbers (used when filtered, and as fallback)
+  const clientAgg = useMemo(() => {
     const filter = selectedSeries.length ? new Set(selectedSeries) : null;
 
     let copies = 0;
@@ -77,20 +79,26 @@ function KpiBar({ selectedSeries }: { selectedSeries: string[] }) {
       if (!f) continue;
       if (filter && !filter.has(f.series)) continue;
 
-      copies += 1;
-      uniqueSet.add(f.id);
+      // First instance → unique; subsequent instances → copies
+      if (!uniqueSet.has(f.id)) uniqueSet.add(f.id);
+      else copies += 1;
 
       const line = (o.pricePaidCents ?? 0) + (o.taxCents ?? 0) + (o.shippingCents ?? 0);
       eurSpend += toEurCents(line, o.currency, o.fxPerEUR ?? undefined);
     }
 
-    const useDb = !filter;
     return {
-      copies: useDb ? dbCounts.copies : copies,
-      unique: useDb ? dbCounts.unique : uniqueSet.size,
+      unique: uniqueSet.size,
+      copies,
       spendDisplayCents: fromEurCents(eurSpend, display),
     };
-  }, [owned, byId, selectedSeries, dbCounts, toEurCents, fromEurCents, display]);
+  }, [owned, byId, selectedSeries, toEurCents, fromEurCents, display]);
+
+  // Pick source: DB when unfiltered, client when filtered
+  const useDb = selectedSeries.length === 0;
+  const unique = useDb ? dbCounts.unique : clientAgg.unique;
+  const copies = useDb ? dbCounts.copies : clientAgg.copies;
+  const spendDisplayCents = clientAgg.spendDisplayCents; // spend is fine client-side
 
   return (
     <section className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -103,7 +111,8 @@ function KpiBar({ selectedSeries }: { selectedSeries: string[] }) {
 
 /* ---------- page client ---------- */
 export default function HomeClient() {
-  const { figures, loading } = useCatalog();
+  const { figures: rawFigures, loading } = useCatalog();
+  const figures: Figure[] = useMemo(() => toAppFigures(rawFigures ?? []), [rawFigures]);
 
   // series filters coming from the grid
   const [selectedSeries, setSelectedSeries] = useState<string[]>([]);
@@ -118,19 +127,18 @@ export default function HomeClient() {
     <div className="space-y-6">
       <h1 className="text-xl font-semibold">All Figures</h1>
 
-      {/* KPIs that follow the grid’s series filter (and DB totals when unfiltered) */}
+      {/* KPIs that follow the grid’s series filter */}
       <KpiBar selectedSeries={selectedSeries} />
 
       {loading ? (
         <div className="card p-6 text-center text-gray-600">Loading…</div>
       ) : (
         <FiguresGrid
-          figures={figures ?? []}
+          figures={figures}
           onAdd={(f) => { setActiveFigure(f); setEditOwnedId(null); }}
           onEditOwned={(ownedId, f) => { setActiveFigure(f); setEditOwnedId(ownedId); }}
           onOpenWish={(f) => setWishFigure(f)}
           onManageOwned={(f) => setManageFigure(f)}
-          /* tell KPI bar which series are selected */
           onSeriesFilterChange={setSelectedSeries}
         />
       )}
@@ -142,11 +150,7 @@ export default function HomeClient() {
         figure={activeFigure}
         ownedId={editOwnedId}
       />
-      <WishModal
-        open={!!wishFigure}
-        onClose={() => setWishFigure(null)}
-        figure={wishFigure}
-      />
+      <WishModal open={!!wishFigure} onClose={() => setWishFigure(null)} figure={wishFigure} />
       <OwnedManagerModal
         open={!!manageFigure}
         onClose={() => setManageFigure(null)}
